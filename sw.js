@@ -1,4 +1,4 @@
-const CACHE_NAME = "archive-shell-v2";
+const CACHE_NAME = "archive-shell-v3";
 const SHELL_FILES = [
   "./",
   "./index.html",
@@ -35,19 +35,19 @@ self.addEventListener("fetch", (event) => {
   const isSameOrigin = url.origin === self.location.origin;
   if (request.method !== "GET" || !isSameOrigin) return;
 
+  // Network-first: always try to get the latest app code. Only fall back
+  // to the cached copy if there's no connection. This means code changes
+  // show up on next reload with no manual cache-busting needed, while
+  // still giving instant offline fallback when the network is down.
   event.respondWith(
-    caches.match(request).then((cached) => {
-      const network = fetch(request)
-        .then((response) => {
-          if (response && response.ok) {
-            const copy = response.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
-          }
-          return response;
-        })
-        .catch(() => cached);
-      // cache-first for instant loads, refresh cache in background
-      return cached || network;
-    })
+    fetch(request)
+      .then((response) => {
+        if (response && response.ok) {
+          const copy = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
+        }
+        return response;
+      })
+      .catch(() => caches.match(request))
   );
 });

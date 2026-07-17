@@ -1,4 +1,4 @@
-const CACHE_NAME = "archive-shell-v4";
+const CACHE_NAME = "archive-shell-v5";
 const SHELL_FILES = [
   "./",
   "./index.html",
@@ -40,7 +40,7 @@ self.addEventListener("fetch", (event) => {
   // show up on next reload with no manual cache-busting needed, while
   // still giving instant offline fallback when the network is down.
   event.respondWith(
-    fetch(request)
+    fetch(request, { cache: "no-store" })
       .then((response) => {
         if (response && response.ok) {
           const copy = response.clone();

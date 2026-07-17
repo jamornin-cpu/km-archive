@@ -790,7 +790,7 @@ function registerServiceWorker() {
   // Service workers require HTTPS (localhost is exempt). Fails silently
   // and harmlessly if served over plain http on a real domain.
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("sw.js").catch((err) => {
+    navigator.serviceWorker.register("sw.js?v=2").catch((err) => {
       console.warn("Service worker registration skipped:", err.message);
     });
   });

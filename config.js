@@ -4,7 +4,7 @@
 window.APP_CONFIG = {
   // Get this from Google Cloud Console → APIs & Services → Credentials
   // (OAuth 2.0 Client ID, type "Web application")
-  CLIENT_ID: "YOUR_GOOGLE_OAUTH_CLIENT_ID.apps.googleusercontent.com",
+    CLIENT_ID: "109721573345-6emvfud6s9lfmrdcv7e8hod75ec3ap30.apps.googleusercontent.com",
 
   // Scope needed to read/write files. Using the broad "drive" scope keeps
   // setup simple (no Picker flow) — see README for the tradeoffs and the

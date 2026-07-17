@@ -706,6 +706,21 @@ $("new-folder-btn").addEventListener("click", async () => {
 const modal = $("preview-modal");
 let activeFile = null;
 
+// Native Google Docs/Sheets/Slides are NOT served through the generic
+// drive.google.com/file/.../preview embed — that URL loads blank for
+// them. Each Workspace type has its own viewer host.
+const GOOGLE_WORKSPACE_VIEWERS = {
+  "application/vnd.google-apps.document": "document",
+  "application/vnd.google-apps.spreadsheet": "spreadsheets",
+  "application/vnd.google-apps.presentation": "presentation",
+};
+
+function buildEmbedUrl(file) {
+  const viewer = GOOGLE_WORKSPACE_VIEWERS[file.mimeType];
+  if (viewer) return `https://docs.google.com/${viewer}/d/${file.id}/preview`;
+  return `https://drive.google.com/file/d/${file.id}/preview`;
+}
+
 function openPreview(file) {
   activeFile = file;
   $("modal-title").textContent = file.name;
@@ -713,7 +728,7 @@ function openPreview(file) {
 
   const body = $("modal-body");
   const type = classify(file.mimeType);
-  const embedUrl = `https://drive.google.com/file/d/${file.id}/preview`;
+  const embedUrl = buildEmbedUrl(file);
 
   if (type === "image" || type === "video" || type === "document") {
     body.innerHTML = `<iframe src="${embedUrl}" allow="autoplay" allowfullscreen></iframe>`;

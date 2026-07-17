@@ -26,6 +26,16 @@
 
 *{ box-sizing:border-box; }
 html,body{ height:100%; }
+
+/* CRITICAL: several component classes below set their own `display`
+   (flex/grid) for layout. Per normal CSS cascade rules, an author
+   stylesheet rule always beats the browser's built-in `[hidden]{display:
+   none}` rule, even with identical specificity and even though `hidden`
+   is set later via JS. Without this override, elements toggled via
+   `.hidden = true` (the modal, gate, drop overlay, etc.) stay visible
+   forever. This single rule must win over everything else on this page. */
+[hidden]{ display:none !important; }
+
 body{
   margin:0;
   background:var(--bg);

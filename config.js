@@ -33,3 +33,17 @@ window.APP_CONFIG = {
     "แผนกสนับสนุนการก่อสร้าง",
   ],
 };
+
+  // Cross-department content-type tags. Stored on each Drive file as a
+  // custom "property" (kmTag) so one file can be found either by which
+  // department owns it (folder location) or by what kind of document it
+  // is (this tag), regardless of which department folder it lives in.
+  // Add/remove/rename tags here; the Home screen tab strip follows this.
+  CONTENT_TAGS: [
+    { key: "sop", label: "SOP & ขั้นตอนทำงาน", color: "#3E7CB1" },
+    { key: "form", label: "แบบฟอร์ม & เทมเพลต", color: "#C08A2E" },
+    { key: "standard", label: "มาตรฐาน & กฎหมาย", color: "#2FA88A" },
+    { key: "lesson", label: "บทเรียนโครงการ", color: "#B1603E" },
+    { key: "drawing", label: "แบบก่อสร้าง & เอกสารอ้างอิง", color: "#6B6FA6" },
+      ],
+    

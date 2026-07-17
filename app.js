@@ -48,6 +48,30 @@ function initAuth() {
     return;
   }
 
+  // The Google Identity Services script tag is loaded with async/defer, so
+  // it can genuinely still be in flight when this runs (slower networks,
+  // mobile data, etc.) — `google` would be undefined and everything below
+  // would throw before the sign-in button's click handler is ever attached,
+  // making the button silently do nothing. Wait for it instead of assuming.
+  waitForGoogleIdentity(() => setupAuth(), () => {
+    showGateError("โหลดระบบล็อกอินของ Google ไม่สำเร็จ — เช็คอินเทอร์เน็ต หรือลองรีเฟรชหน้านี้");
+  });
+}
+
+function waitForGoogleIdentity(onReady, onTimeout, attempt = 0) {
+  if (window.google && window.google.accounts && window.google.accounts.oauth2) {
+    onReady();
+    return;
+  }
+  if (attempt >= 100) {
+    // ~10s of polling (100 * 100ms) and it still hasn't shown up
+    onTimeout();
+    return;
+  }
+  setTimeout(() => waitForGoogleIdentity(onReady, onTimeout, attempt + 1), 100);
+}
+
+function setupAuth() {
   state.tokenClient = google.accounts.oauth2.initTokenClient({
     client_id: window.APP_CONFIG.CLIENT_ID,
     scope: window.APP_CONFIG.SCOPE,
@@ -790,7 +814,7 @@ function registerServiceWorker() {
   // Service workers require HTTPS (localhost is exempt). Fails silently
   // and harmlessly if served over plain http on a real domain.
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("sw.js?v=2").catch((err) => {
+    navigator.serviceWorker.register("sw.js?v=3").catch((err) => {
       console.warn("Service worker registration skipped:", err.message);
     });
   });

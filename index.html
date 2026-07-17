@@ -3,12 +3,12 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-<title>Archive — Drive Library</title>
+<title>คลังความรู้องค์กร | Knowledge Management</title>
 
 <!-- PWA -->
 <link rel="manifest" href="manifest.json" />
-<meta name="theme-color" content="#0F1B2B" />
-<meta name="background-color" content="#0F1B2B" />
+<meta name="theme-color" content="#0B2545" />
+<meta name="background-color" content="#0B2545" />
 <link rel="icon" href="icons/icon-192.png" />
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -18,8 +18,8 @@
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=4" />
+<link href="https://fonts.googleapis.com/css2?family=Prompt:wght@500;600;700&family=Sarabun:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css?v=5" />
 </head>
 <body>
 
@@ -31,10 +31,10 @@
   <!-- ============ SIGN-IN GATE ============ -->
   <section id="gate" class="gate">
     <div class="gate-card">
-      <div class="gate-stamp">ARCHIVE</div>
-      <h1>Document &amp; Media Archive</h1>
-      <p class="gate-sub">Your files, catalogued and stored directly in Google Drive. Nothing leaves your account.</p>
-      <button id="signin-btn" class="btn btn-primary">Connect Google Drive</button>
+      <div class="gate-stamp">⚡ คลังความรู้องค์กร</div>
+      <h1>ทุกคำตอบเพื่องานที่แม่นยำ ปลอดภัย และมีประสิทธิภาพ</h1>
+      <p class="gate-sub">ค้นหา SOP คู่มือปฏิบัติงาน และบทเรียนจากประสบการณ์จริง ได้ในไม่กี่วินาที — ข้อมูลทั้งหมดเก็บอยู่ใน Google Drive ขององค์กร ไม่มีการคัดลอกออกไปที่อื่น</p>
+      <button id="signin-btn" class="btn btn-primary">เข้าสู่คลังความรู้ด้วย Google</button>
       <p id="gate-error" class="gate-error" hidden></p>
     </div>
   </section>
@@ -44,8 +44,8 @@
 
     <header class="topbar">
       <div class="brand">
-        <span class="brand-mark">▣</span>
-        <span class="brand-name">Archive</span>
+        <span class="brand-mark">⚡</span>
+        <span class="brand-name">คลังความรู้องค์กร</span>
       </div>
 
       <nav id="breadcrumb" class="breadcrumb" aria-label="Folder path"></nav>
@@ -121,7 +121,7 @@
   </div>
 
   <script src="https://accounts.google.com/gsi/client" async defer></script>
-  <script src="config.js?v=4"></script>
-  <script src="app.js?v=4"></script>
+  <script src="config.js?v=5"></script>
+  <script src="app.js?v=5"></script>
 </body>
 </html>

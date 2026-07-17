@@ -536,7 +536,7 @@ function classify(mimeType) {
   return "other";
 }
 
-const TYPE_ICON = { folder: "▤", image: "▧", video: "▶", document: "▥", other: "◆" };
+const TYPE_ICON = { folder: "📁", image: "🖼️", video: "🎬", document: "📄", other: "📦" };
 
 function isAtRoot() {
   return state.path.length === 1 && state.currentFolderId === state.rootFolderId;
@@ -567,6 +567,7 @@ function renderHomeTabs() {
     { key: "departments", label: "แผนก", color: null },
     ...tags,
     { key: "latest", label: "อัปเดตล่าสุด", color: "#93A6BC" },
+    { key: "experts", label: "ผู้เชี่ยวชาญ", color: "#4B5563" },
   ];
 
   homeTabsEl.innerHTML = tabs
@@ -591,9 +592,43 @@ function selectHomeView(key) {
     renderGrid();
   } else if (key === "latest") {
     loadLatestFiles();
+  } else if (key === "experts") {
+    renderGrid();
   } else {
     loadTaggedFiles(key);
   }
+}
+
+/** The "ผู้เชี่ยวชาญ" tab isn't Drive data at all — just a static people
+ * directory from config.js, rendered as its own card style. */
+function renderExpertsView() {
+  $("filter-tabs").hidden = true;
+  searchStatus.hidden = true;
+  grid.classList.remove("grid-departments");
+  grid.classList.add("experts-grid");
+  grid.innerHTML = "";
+
+  const experts = window.APP_CONFIG.EXPERTS || [];
+  emptyState.hidden = experts.length > 0;
+  if (!experts.length) {
+    emptyState.querySelector("p:first-of-type").textContent = "ยังไม่มีข้อมูลผู้เชี่ยวชาญ";
+    emptyState.querySelector(".empty-sub").textContent = "เพิ่มรายชื่อได้ที่ EXPERTS ใน config.js";
+    return;
+  }
+
+  experts.forEach((p) => {
+    const card = document.createElement("div");
+    card.className = "expert-card";
+    const href = p.contactType === "tel" ? `tel:${p.contact}` : `mailto:${p.contact}`;
+    card.innerHTML = `
+      <div class="expert-avatar">${escapeHtml(p.icon || "👤")}</div>
+      <h4>${escapeHtml(p.name || "")}</h4>
+      <div class="role">${escapeHtml(p.role || "")}</div>
+      ${p.dept ? `<div class="dept">${escapeHtml(p.dept)}</div>` : ""}
+      ${p.contact ? `<a class="contact" href="${href}">ติดต่อ →</a>` : ""}
+    `;
+    grid.appendChild(card);
+  });
 }
 
 function renderGrid() {
@@ -602,6 +637,12 @@ function renderGrid() {
   let items;
 
   renderHomeTabs();
+
+  if (atRoot && !state.searchMode && state.homeView === "experts") {
+    renderExpertsView();
+    return;
+  }
+  grid.classList.remove("experts-grid");
 
   if (state.searchMode) {
     items = state.searchResults;
@@ -694,9 +735,11 @@ function buildCard(file, atRoot = false, showPath = false) {
   const tagHtml = tag ? `<span class="card-tag" style="--tag-color:${tag.color}">${escapeHtml(tag.label)}</span>` : "";
 
   if (deptIdx !== -1) {
+    const icons = window.APP_CONFIG.DEPARTMENT_ICONS || [];
+    const deptEmoji = icons[deptIdx] || "📁";
     card.innerHTML = `
       <div class="dept-tab">แผนก ${String(deptIdx + 1).padStart(2, "0")}</div>
-      <div class="card-icon">▤</div>
+      <div class="card-icon">${deptEmoji}</div>
       <div class="card-name card-name-dept">${escapeHtml(file.name)}</div>
     `;
   } else if (showPath) {
@@ -1010,7 +1053,7 @@ function registerServiceWorker() {
   // Service workers require HTTPS (localhost is exempt). Fails silently
   // and harmlessly if served over plain http on a real domain.
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("sw.js?v=4").catch((err) => {
+    navigator.serviceWorker.register("sw.js?v=5").catch((err) => {
       console.warn("Service worker registration skipped:", err.message);
     });
   });

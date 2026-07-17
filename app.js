@@ -18,6 +18,10 @@ const state = {
   searchResults: [],
   folderIndex: null,         // Map<folderId, {name, parentId}> — whole tree under root
   folderIndexBuiltAt: 0,
+
+  // Home screen tab strip: "departments" (default) | a CONTENT_TAGS key | "latest"
+  homeView: "departments",
+  homeResults: [],
 };
 
 const DRIVE_FILES_URL = "https://www.googleapis.com/drive/v3/files";
@@ -38,6 +42,7 @@ const dropOverlay = $("drop-overlay");
 const uploadTray = $("upload-tray");
 const searchInput = $("search-input");
 const searchStatus = $("search-status");
+const homeTabsEl = $("home-tabs");
 
 /* ===================================================================
    AUTH
@@ -109,6 +114,10 @@ function signOut() {
   state.accessToken = null;
   state.currentFolderId = null;
   state.path = [];
+  state.homeView = "departments";
+  state.homeResults = [];
+  state.searchMode = false;
+  state.folderIndex = null;
   app.hidden = true;
   gate.hidden = false;
 }
@@ -178,7 +187,7 @@ async function driveFetch(url, options = {}) {
 }
 
 async function listFolder(folderId) {
-  const fields = "files(id,name,mimeType,thumbnailLink,webViewLink,webContentLink,createdTime,modifiedTime,size,iconLink),nextPageToken";
+  const fields = "files(id,name,mimeType,thumbnailLink,webViewLink,webContentLink,createdTime,modifiedTime,size,iconLink,properties),nextPageToken";
   let all = [];
   let pageToken = "";
   do {
@@ -292,7 +301,7 @@ async function performGlobalSearch(term) {
 
     const esc = escapeForDriveQuery(term.trim());
     const q = `(name contains '${esc}' or fullText contains '${esc}') and trashed=false and mimeType != '${FOLDER_MIME}'`;
-    const fields = "files(id,name,mimeType,thumbnailLink,webViewLink,webContentLink,parents,modifiedTime,size),nextPageToken";
+    const fields = "files(id,name,mimeType,thumbnailLink,webViewLink,webContentLink,parents,modifiedTime,size,properties),nextPageToken";
 
     let all = [];
     let pageToken = "";
@@ -321,6 +330,86 @@ async function createFolder(name, parentId) {
     body: JSON.stringify({ name, mimeType: FOLDER_MIME, parents: [parentId] }),
   });
   return res.json();
+}
+
+/**
+ * Home-screen tab: files anywhere in the library tagged with a given
+ * CONTENT_TAGS key (stored as a Drive "property", not a folder move —
+ * a file keeps living wherever its department put it).
+ */
+async function loadTaggedFiles(tagKey) {
+  loadingState.hidden = false;
+  grid.innerHTML = "";
+  emptyState.hidden = true;
+  try {
+    await ensureFolderIndex();
+    const fields = "files(id,name,mimeType,thumbnailLink,webViewLink,webContentLink,parents,modifiedTime,size,properties),nextPageToken";
+    const q = `properties has { key='kmTag' and value='${tagKey}' } and trashed=false`;
+    let all = [];
+    let pageToken = "";
+    do {
+      const url = `${DRIVE_FILES_URL}?q=${encodeURIComponent(q)}&fields=${encodeURIComponent(fields)}&pageSize=200&orderBy=name_natural${pageToken ? `&pageToken=${pageToken}` : ""}`;
+      const res = await driveFetch(url);
+      const data = await res.json();
+      all = all.concat(data.files || []);
+      pageToken = data.nextPageToken || "";
+    } while (pageToken);
+
+    state.homeResults = all.filter((f) => (f.parents || []).some((p) => isDescendantOfRoot(p)));
+    renderGrid();
+  } catch (err) {
+    console.error(err);
+    showTransientError(err.message);
+  } finally {
+    loadingState.hidden = true;
+  }
+}
+
+/** Home-screen tab: most recently modified files anywhere in the library. */
+async function loadLatestFiles() {
+  loadingState.hidden = false;
+  grid.innerHTML = "";
+  emptyState.hidden = true;
+  try {
+    await ensureFolderIndex();
+    const fields = "files(id,name,mimeType,thumbnailLink,webViewLink,webContentLink,parents,modifiedTime,size,properties),nextPageToken";
+    const q = `trashed=false and mimeType != '${FOLDER_MIME}'`;
+    let all = [];
+    let pageToken = "";
+    // Pull a bit more than we need, since some results will be outside our
+    // root folder and get filtered out below.
+    do {
+      const url = `${DRIVE_FILES_URL}?q=${encodeURIComponent(q)}&fields=${encodeURIComponent(fields)}&pageSize=50&orderBy=modifiedTime desc${pageToken ? `&pageToken=${pageToken}` : ""}`;
+      const res = await driveFetch(url);
+      const data = await res.json();
+      all = all.concat(data.files || []);
+      pageToken = data.nextPageToken || "";
+    } while (pageToken && all.length < 150);
+
+    state.homeResults = all.filter((f) => (f.parents || []).some((p) => isDescendantOfRoot(p))).slice(0, 24);
+    renderGrid();
+  } catch (err) {
+    console.error(err);
+    showTransientError(err.message);
+  } finally {
+    loadingState.hidden = true;
+  }
+}
+
+/** Sets (or clears, if tagKey is null) the kmTag property on a file. */
+async function setFileTag(fileId, tagKey) {
+  const res = await driveFetch(`${DRIVE_FILES_URL}/${fileId}?fields=properties`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ properties: { kmTag: tagKey } }),
+  });
+  const updated = await res.json();
+  // keep whatever list is currently on screen in sync without a full reload
+  [state.files, state.searchResults, state.homeResults].forEach((list) => {
+    const hit = list.find((f) => f.id === fileId);
+    if (hit) hit.properties = updated.properties || {};
+  });
+  return updated;
 }
 
 async function deleteFile(fileId) {
@@ -427,6 +516,7 @@ function navigateToCrumb(idx) {
   searchStatus.hidden = true;
   state.path = state.path.slice(0, idx + 1);
   state.currentFolderId = state.path[idx].id;
+  if (idx === 0) state.homeView = "departments";
   loadFolder(state.currentFolderId);
 }
 
@@ -457,9 +547,61 @@ function departmentIndex(name) {
   return list.findIndex((d) => d.trim().toLowerCase() === name.trim().toLowerCase());
 }
 
+function getTag(key) {
+  return (window.APP_CONFIG.CONTENT_TAGS || []).find((t) => t.key === key);
+}
+
+/** True when Home should show a flat cross-department file list (a content
+ * tag or "latest") instead of the department folder grid. */
+function isHomeFlatView() {
+  return isAtRoot() && !state.searchMode && state.homeView !== "departments";
+}
+
+function renderHomeTabs() {
+  const atRoot = isAtRoot();
+  homeTabsEl.hidden = !atRoot || state.searchMode;
+  if (!atRoot || state.searchMode) return;
+
+  const tags = window.APP_CONFIG.CONTENT_TAGS || [];
+  const tabs = [
+    { key: "departments", label: "แผนก", color: null },
+    ...tags,
+    { key: "latest", label: "อัปเดตล่าสุด", color: "#93A6BC" },
+  ];
+
+  homeTabsEl.innerHTML = tabs
+    .map((t) => {
+      const active = state.homeView === t.key;
+      const style = t.color ? ` style="--tag-color:${t.color}"` : "";
+      const dot = t.key === "departments" ? "" : `<span class="home-tab-dot"></span>`;
+      return `<button class="home-tab${active ? " active" : ""}" data-key="${t.key}"${style}>${dot}${escapeHtml(t.label)}</button>`;
+    })
+    .join("");
+
+  homeTabsEl.querySelectorAll(".home-tab").forEach((btn) => {
+    btn.addEventListener("click", () => selectHomeView(btn.dataset.key));
+  });
+}
+
+function selectHomeView(key) {
+  if (state.homeView === key) return;
+  state.homeView = key;
+  renderHomeTabs();
+  if (key === "departments") {
+    renderGrid();
+  } else if (key === "latest") {
+    loadLatestFiles();
+  } else {
+    loadTaggedFiles(key);
+  }
+}
+
 function renderGrid() {
   const atRoot = isAtRoot();
+  const flatHome = isHomeFlatView();
   let items;
+
+  renderHomeTabs();
 
   if (state.searchMode) {
     items = state.searchResults;
@@ -470,6 +612,13 @@ function renderGrid() {
     searchStatus.hidden = false;
     searchStatus.innerHTML = `<span>ผลการค้นหา “${escapeHtml(state.query)}” — พบ ${items.length} รายการ (ชื่อไฟล์ + เนื้อหาเอกสาร ทั้งคลัง)</span><button id="clear-search-btn">ล้างการค้นหา ✕</button>`;
     $("clear-search-btn").addEventListener("click", clearSearch);
+  } else if (flatHome) {
+    items = state.homeResults;
+    searchStatus.hidden = true;
+    $("filter-tabs").hidden = false;
+    if (state.filter !== "all") {
+      items = items.filter((f) => classify(f.mimeType) === state.filter);
+    }
   } else {
     items = state.files;
     searchStatus.hidden = true;
@@ -480,7 +629,7 @@ function renderGrid() {
     }
   }
 
-  if (atRoot && !state.searchMode) {
+  if (atRoot && !state.searchMode && !flatHome) {
     // department folders first, in configured order; anything else after
     items = [...items].sort((a, b) => {
       const ai = departmentIndex(a.name);
@@ -492,24 +641,29 @@ function renderGrid() {
     });
   }
 
+  const showPath = state.searchMode || flatHome;
   grid.innerHTML = "";
-  grid.classList.toggle("grid-departments", atRoot && !state.searchMode);
+  grid.classList.toggle("grid-departments", atRoot && !state.searchMode && !flatHome);
   emptyState.hidden = items.length > 0;
   if (!items.length) {
     emptyState.querySelector("p:first-of-type").textContent = state.searchMode
       ? "ไม่พบไฟล์ที่ตรงกับคำค้นหา"
+      : flatHome
+      ? "ยังไม่มีไฟล์ในหมวดนี้"
       : state.filter !== "all"
       ? "ไม่พบไฟล์ที่ตรงกับเงื่อนไข"
       : "This folder is empty.";
     emptyState.querySelector(".empty-sub").textContent = state.searchMode
       ? "ลองใช้คำค้นหาอื่น หรือคำที่สั้นลง"
+      : flatHome
+      ? "เปิดไฟล์แล้วติดแท็กจากหน้าต่าง preview ได้"
       : state.filter !== "all"
       ? "ลองล้างตัวกรอง"
       : "Drag files here, or use Upload above.";
     return;
   }
 
-  items.forEach((file) => grid.appendChild(buildCard(file, atRoot && !state.searchMode, state.searchMode)));
+  items.forEach((file) => grid.appendChild(buildCard(file, atRoot && !state.searchMode && !flatHome, showPath)));
 }
 
 function clearSearch() {
@@ -521,7 +675,7 @@ function clearSearch() {
   renderGrid();
 }
 
-function buildCard(file, atRoot = false, isSearchResult = false) {
+function buildCard(file, atRoot = false, showPath = false) {
   const type = classify(file.mimeType);
   const deptIdx = atRoot && type === "folder" ? departmentIndex(file.name) : -1;
   const card = document.createElement("div");
@@ -535,19 +689,24 @@ function buildCard(file, atRoot = false, isSearchResult = false) {
     thumbHtml = `<img class="card-thumb" src="${file.thumbnailLink}" alt="" loading="lazy" onerror="this.remove()" />`;
   }
 
+  const tagKey = file.properties && file.properties.kmTag;
+  const tag = tagKey ? getTag(tagKey) : null;
+  const tagHtml = tag ? `<span class="card-tag" style="--tag-color:${tag.color}">${escapeHtml(tag.label)}</span>` : "";
+
   if (deptIdx !== -1) {
     card.innerHTML = `
       <div class="dept-tab">แผนก ${String(deptIdx + 1).padStart(2, "0")}</div>
       <div class="card-icon">▤</div>
       <div class="card-name card-name-dept">${escapeHtml(file.name)}</div>
     `;
-  } else if (isSearchResult) {
+  } else if (showPath) {
     const parentId = (file.parents || [])[0];
     const chain = parentId ? pathFromFolderIndex(parentId) : [];
     const pathLabel = chain.map((c) => c.name).join(" / ") || "—";
     card.innerHTML = `
       ${thumbHtml}
       <div class="card-name">${escapeHtml(file.name)}</div>
+      ${tagHtml}
       <div class="card-path">${escapeHtml(pathLabel)}</div>
     `;
   } else {
@@ -556,12 +715,13 @@ function buildCard(file, atRoot = false, isSearchResult = false) {
     card.innerHTML = `
       ${thumbHtml}
       <div class="card-name">${escapeHtml(file.name)}</div>
+      ${tagHtml}
       <div class="card-meta"><span>${meta}</span><span>${date}</span></div>
     `;
   }
 
   card.addEventListener("click", async () => {
-    if (isSearchResult) {
+    if (showPath) {
       const parentId = (file.parents || [])[0];
       if (parentId) {
         state.path = pathFromFolderIndex(parentId);
@@ -570,6 +730,7 @@ function buildCard(file, atRoot = false, isSearchResult = false) {
         state.query = "";
         searchInput.value = "";
         searchStatus.hidden = true;
+        state.homeView = "departments";
         await loadFolder(parentId);
       }
       openPreview(file);
@@ -766,12 +927,47 @@ function openPreview(file) {
     <span>Modified: ${formatDate(file.modifiedTime)}</span>
   `;
 
+  renderModalTags(file);
   modal.hidden = false;
+}
+
+function renderModalTags(file) {
+  const tags = window.APP_CONFIG.CONTENT_TAGS || [];
+  const current = file.properties && file.properties.kmTag;
+  const el = $("modal-tags");
+
+  el.innerHTML = tags
+    .map((t) => {
+      const active = current === t.key;
+      return `<button class="modal-tag-btn${active ? " active" : ""}" data-key="${t.key}" style="--tag-color:${t.color}"><span class="modal-tag-dot"></span>${escapeHtml(t.label)}</button>`;
+    })
+    .join("");
+
+  el.querySelectorAll(".modal-tag-btn").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      if (!activeFile) return;
+      const key = btn.dataset.key;
+      const clickingActive = btn.classList.contains("active");
+      const newKey = clickingActive ? null : key; // click again to clear
+      btn.disabled = true;
+      try {
+        const updated = await setFileTag(activeFile.id, newKey);
+        activeFile.properties = updated.properties || {};
+        renderModalTags(activeFile);
+        renderGrid(); // reflect the new/removed badge on the card behind the modal
+      } catch (err) {
+        alert("ติดแท็กไม่สำเร็จ: " + err.message);
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  });
 }
 
 function closePreview() {
   modal.hidden = true;
   $("modal-body").innerHTML = "";
+  $("modal-tags").innerHTML = "";
   activeFile = null;
 }
 
@@ -814,7 +1010,7 @@ function registerServiceWorker() {
   // Service workers require HTTPS (localhost is exempt). Fails silently
   // and harmlessly if served over plain http on a real domain.
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("sw.js?v=3").catch((err) => {
+    navigator.serviceWorker.register("sw.js?v=4").catch((err) => {
       console.warn("Service worker registration skipped:", err.message);
     });
   });

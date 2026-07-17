@@ -19,7 +19,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=3" />
+<link rel="stylesheet" href="styles.css?v=4" />
 </head>
 <body>
 
@@ -71,6 +71,8 @@
     <div id="upload-tray" class="upload-tray" hidden></div>
 
     <main class="content">
+      <div id="home-tabs" class="home-tabs" hidden></div>
+
       <div id="filter-tabs" class="filter-tabs">
         <button class="filter-tab active" data-filter="all">All</button>
         <button class="filter-tab" data-filter="folder">Folders</button>
@@ -113,12 +115,13 @@
         </div>
       </div>
       <div id="modal-body" class="modal-body"></div>
+      <div id="modal-tags" class="modal-tags"></div>
       <div id="modal-meta" class="modal-meta"></div>
     </div>
   </div>
 
   <script src="https://accounts.google.com/gsi/client" async defer></script>
-  <script src="config.js?v=3"></script>
-  <script src="app.js?v=3"></script>
+  <script src="config.js?v=4"></script>
+  <script src="app.js?v=4"></script>
 </body>
 </html>

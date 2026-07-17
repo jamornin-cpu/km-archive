@@ -413,6 +413,88 @@ body{
   white-space:nowrap;
 }
 
+/* ---- home screen tab strip (departments / content tags / latest) ---- */
+.home-tabs{
+  display:flex;
+  flex-wrap:wrap;
+  gap:8px;
+  margin-bottom:22px;
+  padding-bottom:18px;
+  border-bottom:1px solid var(--border);
+}
+.home-tab{
+  font-family:var(--font-mono);
+  font-size:11.5px;
+  letter-spacing:0.03em;
+  color:var(--ink-soft);
+  background:var(--panel);
+  border:1px solid var(--border-strong);
+  padding:7px 13px;
+  border-radius:16px;
+  cursor:pointer;
+  display:flex;
+  align-items:center;
+  gap:6px;
+}
+.home-tab:hover{ color:var(--ink); border-color:var(--ink-soft); }
+.home-tab.active{
+  color:var(--accent-ink);
+  background:var(--tag-color, var(--accent));
+  border-color:var(--tag-color, var(--accent));
+  font-weight:600;
+}
+.home-tab-dot{
+  width:7px; height:7px; border-radius:50%;
+  background:var(--tag-color, var(--accent));
+  flex-shrink:0;
+}
+.home-tab.active .home-tab-dot{ background:var(--accent-ink); }
+
+/* ---- tag badge shown on a file card ---- */
+.card-tag{
+  display:inline-block;
+  font-family:var(--font-mono);
+  font-size:9.5px;
+  letter-spacing:0.03em;
+  color:#fff;
+  background:var(--tag-color, var(--accent));
+  padding:2px 7px;
+  border-radius:10px;
+  margin-top:6px;
+  align-self:flex-start;
+}
+
+/* ---- tag picker inside the preview modal ---- */
+.modal-tags{
+  display:flex;
+  flex-wrap:wrap;
+  gap:6px;
+  padding:12px 18px;
+  border-top:1px solid var(--border);
+}
+.modal-tag-btn{
+  font-family:var(--font-mono);
+  font-size:11px;
+  color:var(--ink-soft);
+  background:transparent;
+  border:1px solid var(--border-strong);
+  padding:5px 11px;
+  border-radius:14px;
+  cursor:pointer;
+  display:flex;
+  align-items:center;
+  gap:5px;
+}
+.modal-tag-btn:hover{ color:var(--ink); border-color:var(--ink-soft); }
+.modal-tag-btn.active{
+  color:#fff;
+  background:var(--tag-color, var(--accent));
+  border-color:var(--tag-color, var(--accent));
+  font-weight:600;
+}
+.modal-tag-dot{ width:7px; height:7px; border-radius:50%; background:var(--tag-color, var(--accent)); }
+.modal-tag-btn.active .modal-tag-dot{ background:#fff; }
+
 /* ===================================================================
    EMPTY / LOADING
 =================================================================== */

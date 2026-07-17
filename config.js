@@ -15,7 +15,7 @@ window.APP_CONFIG = {
   // folder (recommended). Leave empty to browse the user's whole My Drive.
   // The folder ID is the long string in the folder's URL:
   // https://drive.google.com/drive/folders/<THIS_PART>
-  ROOT_FOLDER_ID: "",
+    ROOT_FOLDER_ID: "1A63mxgJfpb_TACRYI9QAJFK-AD6HO55F",
 
   // Label shown for the top-level breadcrumb / home screen.
   ROOT_LABEL: "ฝ่ายวิศวกรรม",

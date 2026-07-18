@@ -1636,30 +1636,44 @@ function handleFiles(files) {
   showDocTypeChooser(files);
 }
 
+/** Looks up a department folder's real Drive ID by name, from the
+ * currently-loaded root listing (state.files). Only meaningful when
+ * sitting at the library root, which is the only place this is needed. */
+function findDeptFolderId(deptName) {
+  const match = state.files.find(
+    (f) => f.mimeType === FOLDER_MIME && f.name.trim().toLowerCase() === deptName.trim().toLowerCase()
+  );
+  return match ? match.id : null;
+}
+
 function showDocTypeChooser(files) {
   const types = window.APP_CONFIG.DOCUMENT_TYPES || [];
   const dept = currentDepartment();
   const depts = window.APP_CONFIG.DEPARTMENTS || [];
   const codes = window.APP_CONFIG.DEPARTMENT_CODES || [];
+  const atRoot = isAtRoot();
+  const deptUnknown = !dept;
 
   uploadTray.hidden = false;
   uploadTray.innerHTML = `
     <div class="doctype-chooser">
-      <div class="doctype-chooser-label">ติดรหัสเอกสารให้ไฟล์ชุดนี้ไหม? (${files.length} ไฟล์)</div>
+      <div class="doctype-chooser-label">
+        ${dept ? `แผนก: <strong>${escapeHtml(dept.name)}</strong> — ` : ""}อัปโหลด ${files.length} ไฟล์
+      </div>
 
       <select id="doctype-select">
         <option value="">ไม่ติดรหัส — อัปโหลดเฉยๆ</option>
         ${types.map((t) => `<option value="${t.key}">${escapeHtml(t.label)}</option>`).join("")}
       </select>
 
-      <div id="doctype-dept-row" class="doctype-dept-row" hidden>
+      <div id="doctype-dept-row" class="doctype-dept-row" ${deptUnknown && atRoot ? "" : "hidden"}>
         ${
-          dept
-            ? `<span class="doctype-dept-detected">แผนก: <strong>${escapeHtml(dept.name)}</strong> (${dept.code})</span>`
-            : `<select id="doctype-dept-select">
-                 <option value="">— เลือกแผนกสำหรับเลขรหัส —</option>
+          deptUnknown
+            ? `<select id="doctype-dept-select">
+                 <option value="">— เลือกแผนก${atRoot ? " (จำเป็น เพื่อจัดเก็บไฟล์)" : " (สำหรับเลขรหัส)"} —</option>
                  ${depts.map((d, i) => `<option value="${i}">${escapeHtml(d)} (${codes[i] || "GEN"})</option>`).join("")}
                </select>`
+            : ""
         }
         <input id="doctype-rev-input" type="text" placeholder="Rev (ไม่บังคับ) เช่น 01" />
       </div>
@@ -1672,7 +1686,10 @@ function showDocTypeChooser(files) {
   const typeSelect = $("doctype-select");
   const deptRow = $("doctype-dept-row");
   typeSelect.addEventListener("change", () => {
-    deptRow.hidden = !typeSelect.value;
+    // The department row must show if: we're at root (always — files need
+    // a home) OR a document type was picked and we still don't know the
+    // department (needed to build the code).
+    deptRow.hidden = !(deptUnknown && (atRoot || typeSelect.value));
   });
 
   $("doctype-cancel-btn").addEventListener("click", () => {
@@ -1683,23 +1700,37 @@ function showDocTypeChooser(files) {
 
   $("doctype-confirm-btn").addEventListener("click", async () => {
     const typeKey = typeSelect.value || null;
-    const rev = $("doctype-rev-input") ? $("doctype-rev-input").value : "";
+    const revInput = $("doctype-rev-input");
+    const rev = revInput ? revInput.value : "";
+
     let deptInfo = dept;
-    if (typeKey && !deptInfo) {
+    let targetFolderId = state.currentFolderId;
+
+    if (deptUnknown && (atRoot || typeKey)) {
       const sel = $("doctype-dept-select");
       const idx = sel ? parseInt(sel.value, 10) : NaN;
       if (Number.isNaN(idx)) {
-        alert("กรุณาเลือกแผนกก่อน เพื่อให้รันเลขรหัสได้ถูกต้อง");
+        alert(atRoot ? "กรุณาเลือกแผนกก่อน เพื่อให้รู้ว่าจะอัปโหลดไฟล์เข้าแผนกไหน" : "กรุณาเลือกแผนกก่อน เพื่อให้รันเลขรหัสได้ถูกต้อง");
         return;
       }
       deptInfo = { name: depts[idx], code: codes[idx] || "GEN", index: idx };
+      if (atRoot) {
+        const folderId = findDeptFolderId(deptInfo.name);
+        if (!folderId) {
+          alert(`หาโฟลเดอร์แผนก "${deptInfo.name}" ไม่เจอ — ลองรีเฟรชหน้าแล้วลองใหม่`);
+          return;
+        }
+        targetFolderId = folderId;
+      }
     }
+
     uploadTray.innerHTML = "";
-    await startUploads(files, typeKey, deptInfo, rev);
+    await startUploads(files, typeKey, deptInfo, rev, targetFolderId);
   });
 }
 
-async function startUploads(files, typeKey, deptInfo, rev) {
+async function startUploads(files, typeKey, deptInfo, rev, targetFolderId) {
+  const uploadFolderId = targetFolderId || state.currentFolderId;
   let nextSeq = null;
   if (typeKey && deptInfo) {
     try {
@@ -1733,7 +1764,7 @@ async function startUploads(files, typeKey, deptInfo, rev) {
 
     uploadFile(
       file,
-      state.currentFolderId,
+      uploadFolderId,
       (pct) => {
         fill.style.width = pct + "%";
       },
@@ -1744,7 +1775,12 @@ async function startUploads(files, typeKey, deptInfo, rev) {
         row.classList.add("done");
         fill.style.width = "100%";
         status.textContent = overrideName ? `Filed as ${overrideName}` : "Filed.";
-        loadFolder(state.currentFolderId);
+        // only refresh the visible grid if we're actually looking at the
+        // folder the file just landed in (e.g. uploading a department's
+        // file while sitting on the Home page shouldn't yank you there)
+        if (state.currentFolderId === uploadFolderId) {
+          loadFolder(state.currentFolderId);
+        }
         setTimeout(() => {
           row.remove();
           if (!uploadTray.children.length) uploadTray.hidden = true;
@@ -1947,7 +1983,7 @@ function registerServiceWorker() {
   // Service workers require HTTPS (localhost is exempt). Fails silently
   // and harmlessly if served over plain http on a real domain.
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("sw.js?v=13").catch((err) => {
+    navigator.serviceWorker.register("sw.js?v=14").catch((err) => {
       console.warn("Service worker registration skipped:", err.message);
     });
   });

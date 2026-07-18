@@ -1851,6 +1851,7 @@ function openPreview(file) {
   `;
 
   renderModalTags(file);
+  renderModalDocCode(file);
   modal.hidden = false;
 }
 
@@ -1887,10 +1888,116 @@ function renderModalTags(file) {
   });
 }
 
+/**
+ * Retroactive document numbering — for files that were uploaded before
+ * this feature existed, or that were uploaded with "ไม่ติดรหัส". Same
+ * numbering logic as the upload flow (TYPE-DEPT-NNN), just triggered from
+ * the preview modal instead of at upload time.
+ */
+async function updateFileNameAndProperties(fileId, newName, properties) {
+  const res = await driveFetch(`${DRIVE_FILES_URL}/${fileId}?fields=id,name,properties`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: newName, properties }),
+  });
+  return res.json();
+}
+
+function renderModalDocCode(file) {
+  const el = $("modal-doccode");
+  if (!el) return;
+  const existing = file.properties && file.properties.docCode;
+
+  if (existing) {
+    el.innerHTML = `<div class="doccode-existing">🏷️ รหัสเอกสาร: <strong>${escapeHtml(existing)}</strong></div>`;
+    return;
+  }
+
+  const types = window.APP_CONFIG.DOCUMENT_TYPES || [];
+  const depts = window.APP_CONFIG.DEPARTMENTS || [];
+  const codes = window.APP_CONFIG.DEPARTMENT_CODES || [];
+  const dept = currentDepartment();
+
+  el.innerHTML = `
+    <div class="doccode-form">
+      <span class="doccode-label">🏷️ ไฟล์นี้ยังไม่มีรหัส —</span>
+      <select id="modal-doctype-select">
+        <option value="">เลือกประเภทเพื่อติดรหัสย้อนหลัง</option>
+        ${types.map((t) => `<option value="${t.key}">${escapeHtml(t.label)}</option>`).join("")}
+      </select>
+      ${
+        dept
+          ? `<span class="doccode-dept-detected">แผนก: <strong>${escapeHtml(dept.name)}</strong></span>`
+          : `<select id="modal-doctype-dept-select">
+               <option value="">— เลือกแผนก —</option>
+               ${depts.map((d, i) => `<option value="${i}">${escapeHtml(d)} (${codes[i] || "GEN"})</option>`).join("")}
+             </select>`
+      }
+      <input id="modal-doctype-rev-input" type="text" placeholder="Rev (ไม่บังคับ)" />
+      <button id="modal-doctype-assign-btn" class="btn btn-primary btn-sm">ติดรหัสให้ไฟล์นี้</button>
+    </div>
+  `;
+
+  $("modal-doctype-assign-btn").addEventListener("click", async () => {
+    if (!activeFile) return;
+    const typeKey = $("modal-doctype-select").value;
+    if (!typeKey) {
+      alert("กรุณาเลือกประเภทเอกสารก่อน");
+      return;
+    }
+
+    let deptInfo = dept;
+    if (!deptInfo) {
+      const sel = $("modal-doctype-dept-select");
+      const idx = sel ? parseInt(sel.value, 10) : NaN;
+      if (Number.isNaN(idx)) {
+        alert("กรุณาเลือกแผนกก่อน เพื่อให้รันเลขรหัสได้ถูกต้อง");
+        return;
+      }
+      deptInfo = { name: depts[idx], code: codes[idx] || "GEN", index: idx };
+    }
+
+    const rev = $("modal-doctype-rev-input") ? $("modal-doctype-rev-input").value : "";
+    const btn = $("modal-doctype-assign-btn");
+    btn.disabled = true;
+    btn.textContent = "กำลังติดรหัส…";
+
+    try {
+      const seq = (await getMaxDocSeq(typeKey, deptInfo.code)) + 1;
+      const docCode = `${typeKey}-${deptInfo.code}-${String(seq).padStart(3, "0")}`;
+      const newName = buildDocFileName(docCode, rev, null, activeFile.name);
+      const properties = { docCode, docType: typeKey, docDept: deptInfo.code };
+      if (rev && rev.trim()) properties.docRev = rev.trim();
+
+      const updated = await updateFileNameAndProperties(activeFile.id, newName, properties);
+      activeFile.name = updated.name;
+      activeFile.properties = updated.properties || properties;
+
+      $("modal-title").textContent = activeFile.name;
+      renderModalDocCode(activeFile);
+
+      // keep whatever list is currently on screen in sync without a full reload
+      [state.files, state.searchResults, state.homeResults].forEach((list) => {
+        const hit = list.find((f) => f.id === activeFile.id);
+        if (hit) {
+          hit.name = activeFile.name;
+          hit.properties = activeFile.properties;
+        }
+      });
+      renderGrid();
+    } catch (err) {
+      alert("ติดรหัสไม่สำเร็จ: " + err.message);
+      btn.disabled = false;
+      btn.textContent = "ติดรหัสให้ไฟล์นี้";
+    }
+  });
+}
+
 function closePreview() {
   modal.hidden = true;
   $("modal-body").innerHTML = "";
   $("modal-tags").innerHTML = "";
+  $("modal-doccode").innerHTML = "";
   activeFile = null;
 }
 
@@ -1983,7 +2090,7 @@ function registerServiceWorker() {
   // Service workers require HTTPS (localhost is exempt). Fails silently
   // and harmlessly if served over plain http on a real domain.
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("sw.js?v=14").catch((err) => {
+    navigator.serviceWorker.register("sw.js?v=15").catch((err) => {
       console.warn("Service worker registration skipped:", err.message);
     });
   });

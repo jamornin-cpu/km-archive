@@ -1,10 +1,10 @@
-const CACHE_NAME = "archive-shell-v17";
+const CACHE_NAME = "archive-shell-v18";
 const SHELL_FILES = [
   "./",
   "./index.html",
-  "./styles.css?v=14",
-  "./app.js?v=14",
-  "./config.js?v=14",
+  "./styles.css?v=15",
+  "./app.js?v=15",
+  "./config.js?v=15",
   "./manifest.json",
   "./icons/icon-192.png",
   "./icons/icon-512.png",

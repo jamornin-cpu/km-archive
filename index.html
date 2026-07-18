@@ -19,7 +19,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Prompt:wght@500;600;700&family=Sarabun:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=11" />
+<link rel="stylesheet" href="styles.css?v=13" />
 </head>
 <body>
 
@@ -105,6 +105,25 @@
 
     <button id="fab-upload" class="fab" title="อัปโหลดไฟล์ใหม่">＋</button>
     <div id="visit-counter" class="visit-counter" hidden></div>
+
+    <!-- ============ POOMMY — chat search assistant ============ -->
+    <button id="poommy-bubble" class="poommy-bubble" title="ถามน้องพุมมี่">🤖</button>
+    <div id="poommy-panel" class="poommy-panel" hidden>
+      <div class="poommy-header">
+        <span class="poommy-avatar">🤖</span>
+        <div class="poommy-title">
+          <strong>น้องพุมมี่</strong>
+          <span>ผู้ช่วยค้นหาเอกสาร</span>
+        </div>
+        <button id="poommy-close-btn" class="poommy-close" aria-label="ปิด">✕</button>
+      </div>
+      <div id="poommy-messages" class="poommy-messages"></div>
+      <div class="poommy-input-row">
+        <input id="poommy-text-input" type="text" placeholder="พิมพ์หรือกดไมค์ถามได้เลย…" autocomplete="off" />
+        <button id="poommy-mic-btn" class="poommy-mic" title="พูดถาม" type="button">🎤</button>
+        <button id="poommy-send-btn" class="poommy-send" title="ส่ง" type="button">➤</button>
+      </div>
+    </div>
   </div>
 
   <!-- ============ PREVIEW MODAL ============ -->
@@ -127,7 +146,7 @@
   </div>
 
   <script src="https://accounts.google.com/gsi/client" async defer></script>
-  <script src="config.js?v=11"></script>
-  <script src="app.js?v=11"></script>
+  <script src="config.js?v=13"></script>
+  <script src="app.js?v=13"></script>
 </body>
 </html>

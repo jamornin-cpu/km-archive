@@ -1427,6 +1427,172 @@ searchInput.addEventListener("input", (e) => {
 });
 
 /* ===================================================================
+   POOMMY — floating chatbot-style search assistant. Wraps the same
+   voice search + text search pipeline as before, but in a persistent
+   chat bubble instead of inline mic buttons. Uses only native browser
+   APIs (SpeechRecognition + SpeechSynthesis) — no external service, no
+   API key, no cost. Support varies by browser: solid on Chrome/Edge;
+   Safari support exists on recent versions but can be inconsistent,
+   especially older iOS. The mic button inside the panel hides itself
+   automatically when the browser has neither API — typing still works
+   everywhere.
+=================================================================== */
+const SpeechRecognitionCtor = window.SpeechRecognition || window.webkitSpeechRecognition;
+const voiceSearchSupported = !!SpeechRecognitionCtor;
+const voiceSynthesisSupported = "speechSynthesis" in window;
+
+function speak(text) {
+  if (!voiceSynthesisSupported) return;
+  window.speechSynthesis.cancel(); // stop anything already being read
+  const utter = new SpeechSynthesisUtterance(text);
+  utter.lang = "th-TH";
+  window.speechSynthesis.speak(utter);
+}
+
+const poommyBubble = $("poommy-bubble");
+const poommyPanel = $("poommy-panel");
+const poommyMessages = $("poommy-messages");
+const poommyInput = $("poommy-text-input");
+let poommyGreeted = false;
+
+function poommyAddMessage(role, html) {
+  const row = document.createElement("div");
+  row.className = `poommy-msg poommy-msg-${role}`;
+  row.innerHTML = html;
+  poommyMessages.appendChild(row);
+  poommyMessages.scrollTop = poommyMessages.scrollHeight;
+  return row;
+}
+
+function poommyGreet() {
+  if (poommyGreeted) return;
+  poommyGreeted = true;
+  poommyAddMessage(
+    "bot",
+    "สวัสดีค่ะ หนูชื่อ<strong>พุมมี่</strong>ค่ะ 🤖<br>ถามหาเอกสารอะไรก็ได้เลยนะคะ พิมพ์หรือกดไมค์พูดก็ได้ค่ะ"
+  );
+}
+
+if (poommyBubble && poommyPanel) {
+  poommyBubble.addEventListener("click", () => {
+    const opening = poommyPanel.hidden;
+    poommyPanel.hidden = !poommyPanel.hidden;
+    poommyBubble.classList.toggle("open", !poommyPanel.hidden);
+    if (opening) {
+      poommyGreet();
+      if (poommyInput) poommyInput.focus();
+    }
+  });
+  const closeBtn = $("poommy-close-btn");
+  if (closeBtn) {
+    closeBtn.addEventListener("click", () => {
+      poommyPanel.hidden = true;
+      poommyBubble.classList.remove("open");
+    });
+  }
+}
+
+async function poommyAsk(text) {
+  if (!text || !text.trim()) return;
+  poommyAddMessage("user", escapeHtml(text));
+  if (poommyInput) poommyInput.value = "";
+  const thinkingEl = poommyAddMessage("bot", `<span class="poommy-thinking">กำลังค้นหา…</span>`);
+
+  // drive the real search UI in the background too, so the person can see
+  // results in context if they close the chat panel
+  searchInput.value = text;
+  state.query = text;
+  state.searchMode = true;
+
+  try {
+    await performGlobalSearch(text);
+    const n = state.searchResults.length;
+    thinkingEl.remove();
+
+    if (n === 0) {
+      poommyAddMessage("bot", `ไม่พบเอกสารที่เกี่ยวข้องกับ "${escapeHtml(text)}" เลยค่ะ ลองใช้คำอื่นดูไหมคะ`);
+      speak(`ไม่พบเอกสารที่เกี่ยวข้องกับ ${text}`);
+      return;
+    }
+
+    const top = state.searchResults.slice(0, 5);
+    const listHtml = top.map((f, i) => `<button class="poommy-result" data-idx="${i}">📄 ${escapeHtml(f.name)}</button>`).join("");
+    const resultRow = poommyAddMessage(
+      "bot",
+      `พบ ${n} รายการที่เกี่ยวข้องค่ะ${n > 5 ? " (แสดง 5 อันดับแรก)" : ""}<div class="poommy-results">${listHtml}</div>`
+    );
+
+    resultRow.querySelectorAll(".poommy-result").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const file = top[parseInt(btn.dataset.idx, 10)];
+        const parentId = (file.parents || [])[0];
+        if (parentId) {
+          await ensureFolderIndex();
+          state.path = pathFromFolderIndex(parentId);
+          state.currentFolderId = parentId;
+          state.homeView = "sections";
+          state.searchMode = false;
+          searchInput.value = "";
+          searchStatus.hidden = true;
+          await loadFolder(parentId);
+        }
+        openPreview(file);
+        poommyPanel.hidden = true;
+        poommyBubble.classList.remove("open");
+      });
+    });
+
+    speak(`พบ ${n} รายการที่เกี่ยวข้องกับ ${text} รายการแรกได้แก่ ${top.map((f) => f.name).join(", ")}`);
+  } catch (err) {
+    thinkingEl.remove();
+    poommyAddMessage("bot", `ขอโทษค่ะ ค้นหาไม่สำเร็จ: ${escapeHtml(err.message)}`);
+  }
+}
+
+if (poommyInput) {
+  poommyInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") poommyAsk(poommyInput.value);
+  });
+}
+const poommySendBtn = $("poommy-send-btn");
+if (poommySendBtn) poommySendBtn.addEventListener("click", () => poommyAsk(poommyInput.value));
+
+const poommyMicBtn = $("poommy-mic-btn");
+if (poommyMicBtn) {
+  if (!voiceSearchSupported) {
+    poommyMicBtn.hidden = true;
+  } else {
+    poommyMicBtn.addEventListener("click", () => {
+      if (poommyMicBtn.classList.contains("listening")) return;
+      const recognition = new SpeechRecognitionCtor();
+      recognition.lang = "th-TH";
+      recognition.interimResults = false;
+      recognition.maxAlternatives = 1;
+      poommyMicBtn.classList.add("listening");
+      recognition.onresult = (event) => {
+        const transcript = event.results[0][0].transcript;
+        poommyMicBtn.classList.remove("listening");
+        poommyAsk(transcript);
+      };
+      recognition.onerror = (e) => {
+        poommyMicBtn.classList.remove("listening");
+        if (e.error === "not-allowed" || e.error === "service-not-allowed") {
+          alert("กรุณาอนุญาตให้เว็บนี้ใช้ไมโครโฟน แล้วลองใหม่อีกครั้ง");
+        } else if (e.error !== "no-speech" && e.error !== "aborted") {
+          console.error("Poommy voice error:", e.error);
+        }
+      };
+      recognition.onend = () => poommyMicBtn.classList.remove("listening");
+      try {
+        recognition.start();
+      } catch (err) {
+        poommyMicBtn.classList.remove("listening");
+      }
+    });
+  }
+}
+
+/* ===================================================================
    UPLOAD (button + drag-and-drop)
 =================================================================== */
 const fileInput = $("file-input");
@@ -1781,7 +1947,7 @@ function registerServiceWorker() {
   // Service workers require HTTPS (localhost is exempt). Fails silently
   // and harmlessly if served over plain http on a real domain.
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("sw.js?v=11").catch((err) => {
+    navigator.serviceWorker.register("sw.js?v=13").catch((err) => {
       console.warn("Service worker registration skipped:", err.message);
     });
   });

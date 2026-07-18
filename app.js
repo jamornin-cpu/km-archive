@@ -682,18 +682,25 @@ async function loadRegistry() {
   try {
     await ensureFolderIndex();
     const fields = "files(id,name,mimeType,thumbnailLink,webViewLink,webContentLink,parents,modifiedTime,size,properties),nextPageToken";
-    const q = `properties has { key='docCode' } and trashed=false`;
+    // Drive's `properties has {...}` operator requires an exact value —
+    // there's no "this property key exists, any value" query. So we fetch
+    // every non-folder file in the library and filter for docCode
+    // ourselves, same approach as the dashboard stats.
+    const q = `trashed=false and mimeType != '${FOLDER_MIME}'`;
     let all = [];
     let pageToken = "";
+    const HARD_CAP = 2000;
     do {
       const url = `${DRIVE_FILES_URL}?q=${encodeURIComponent(q)}&fields=${encodeURIComponent(fields)}&pageSize=1000${pageToken ? `&pageToken=${pageToken}` : ""}`;
       const res = await driveFetch(url);
       const data = await res.json();
       all = all.concat(data.files || []);
       pageToken = data.nextPageToken || "";
-    } while (pageToken);
+    } while (pageToken && all.length < HARD_CAP);
 
-    const inLibrary = all.filter((f) => (f.parents || []).some((p) => isDescendantOfRoot(p)));
+    const inLibrary = all.filter(
+      (f) => f.properties && f.properties.docCode && (f.parents || []).some((p) => isDescendantOfRoot(p))
+    );
     inLibrary.sort((a, b) => {
       const ca = (a.properties && a.properties.docCode) || "";
       const cb = (b.properties && b.properties.docCode) || "";
@@ -1703,7 +1710,7 @@ function registerServiceWorker() {
   // Service workers require HTTPS (localhost is exempt). Fails silently
   // and harmlessly if served over plain http on a real domain.
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("sw.js?v=9").catch((err) => {
+    navigator.serviceWorker.register("sw.js?v=10").catch((err) => {
       console.warn("Service worker registration skipped:", err.message);
     });
   });

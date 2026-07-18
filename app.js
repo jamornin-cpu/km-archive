@@ -20,7 +20,7 @@ const state = {
   folderIndexBuiltAt: 0,
 
   // Home screen tab strip: "departments" (default) | a CONTENT_TAGS key | "latest"
-  homeView: "departments",
+  homeView: "sections",
   homeResults: [],
 };
 
@@ -43,6 +43,8 @@ const uploadTray = $("upload-tray");
 const searchInput = $("search-input");
 const searchStatus = $("search-status");
 const homeTabsEl = $("home-tabs");
+const mainContent = $("main-content");
+const homeSectionsEl = $("home-sections");
 
 /* ===================================================================
    AUTH
@@ -114,7 +116,7 @@ function signOut() {
   state.accessToken = null;
   state.currentFolderId = null;
   state.path = [];
-  state.homeView = "departments";
+  state.homeView = "sections";
   state.homeResults = [];
   state.searchMode = false;
   state.folderIndex = null;
@@ -516,7 +518,7 @@ function navigateToCrumb(idx) {
   searchStatus.hidden = true;
   state.path = state.path.slice(0, idx + 1);
   state.currentFolderId = state.path[idx].id;
-  if (idx === 0) state.homeView = "departments";
+  if (idx === 0) state.homeView = "sections";
   loadFolder(state.currentFolderId);
 }
 
@@ -552,18 +554,21 @@ function getTag(key) {
 }
 
 /** True when Home should show a flat cross-department file list (a content
- * tag or "latest") instead of the department folder grid. */
+ * tag or "latest") instead of a special view. */
 function isHomeFlatView() {
-  return isAtRoot() && !state.searchMode && state.homeView !== "departments";
+  if (!isAtRoot() || state.searchMode) return false;
+  return state.homeView !== "departments" && state.homeView !== "sections" && state.homeView !== "experts";
 }
 
 function renderHomeTabs() {
   const atRoot = isAtRoot();
-  homeTabsEl.hidden = !atRoot || state.searchMode;
-  if (!atRoot || state.searchMode) return;
+  const hideStrip = !atRoot || state.searchMode || state.homeView === "sections";
+  homeTabsEl.hidden = hideStrip;
+  if (hideStrip) return;
 
   const tags = window.APP_CONFIG.CONTENT_TAGS || [];
   const tabs = [
+    { key: "sections", label: "🏠 หน้าแรก", color: null },
     { key: "departments", label: "แผนก", color: null },
     ...tags,
     { key: "latest", label: "อัปเดตล่าสุด", color: "#93A6BC" },
@@ -574,7 +579,7 @@ function renderHomeTabs() {
     .map((t) => {
       const active = state.homeView === t.key;
       const style = t.color ? ` style="--tag-color:${t.color}"` : "";
-      const dot = t.key === "departments" ? "" : `<span class="home-tab-dot"></span>`;
+      const dot = t.key === "departments" || t.key === "sections" ? "" : `<span class="home-tab-dot"></span>`;
       return `<button class="home-tab${active ? " active" : ""}" data-key="${t.key}"${style}>${dot}${escapeHtml(t.label)}</button>`;
     })
     .join("");
@@ -588,15 +593,27 @@ function selectHomeView(key) {
   if (state.homeView === key) return;
   state.homeView = key;
   renderHomeTabs();
-  if (key === "departments") {
+  if (key === "departments" || key === "sections" || key === "experts") {
     renderGrid();
   } else if (key === "latest") {
     loadLatestFiles();
-  } else if (key === "experts") {
-    renderGrid();
   } else {
     loadTaggedFiles(key);
   }
+}
+
+function expertCardEl(p) {
+  const card = document.createElement("div");
+  card.className = "expert-card";
+  const href = p.contactType === "tel" ? `tel:${p.contact}` : `mailto:${p.contact}`;
+  card.innerHTML = `
+    <div class="expert-avatar">${escapeHtml(p.icon || "👤")}</div>
+    <h4>${escapeHtml(p.name || "")}</h4>
+    <div class="role">${escapeHtml(p.role || "")}</div>
+    ${p.dept ? `<div class="dept">${escapeHtml(p.dept)}</div>` : ""}
+    ${p.contact ? `<a class="contact" href="${href}">ติดต่อ →</a>` : ""}
+  `;
+  return card;
 }
 
 /** The "ผู้เชี่ยวชาญ" tab isn't Drive data at all — just a static people
@@ -616,27 +633,25 @@ function renderExpertsView() {
     return;
   }
 
-  experts.forEach((p) => {
-    const card = document.createElement("div");
-    card.className = "expert-card";
-    const href = p.contactType === "tel" ? `tel:${p.contact}` : `mailto:${p.contact}`;
-    card.innerHTML = `
-      <div class="expert-avatar">${escapeHtml(p.icon || "👤")}</div>
-      <h4>${escapeHtml(p.name || "")}</h4>
-      <div class="role">${escapeHtml(p.role || "")}</div>
-      ${p.dept ? `<div class="dept">${escapeHtml(p.dept)}</div>` : ""}
-      ${p.contact ? `<a class="contact" href="${href}">ติดต่อ →</a>` : ""}
-    `;
-    grid.appendChild(card);
-  });
+  experts.forEach((p) => grid.appendChild(expertCardEl(p)));
 }
 
 function renderGrid() {
   const atRoot = isAtRoot();
+  renderHomeTabs();
+
+  // The rich stacked homepage replaces the normal .content grid entirely.
+  if (atRoot && !state.searchMode && state.homeView === "sections") {
+    mainContent.hidden = true;
+    homeSectionsEl.hidden = false;
+    renderHomeSections();
+    return;
+  }
+  homeSectionsEl.hidden = true;
+  mainContent.hidden = false;
+
   const flatHome = isHomeFlatView();
   let items;
-
-  renderHomeTabs();
 
   if (atRoot && !state.searchMode && state.homeView === "experts") {
     renderExpertsView();
@@ -705,6 +720,237 @@ function renderGrid() {
   }
 
   items.forEach((file) => grid.appendChild(buildCard(file, atRoot && !state.searchMode && !flatHome, showPath)));
+}
+
+function getSortedDepartmentFolders() {
+  return state.files
+    .filter((f) => f.mimeType === FOLDER_MIME)
+    .slice()
+    .sort((a, b) => {
+      const ai = departmentIndex(a.name);
+      const bi = departmentIndex(b.name);
+      if (ai !== -1 && bi !== -1) return ai - bi;
+      if (ai !== -1) return -1;
+      if (bi !== -1) return 1;
+      return a.name.localeCompare(b.name);
+    });
+}
+
+function articleCardEl(file) {
+  const type = classify(file.mimeType);
+  const tagKey = file.properties && file.properties.kmTag;
+  const tag = tagKey ? getTag(tagKey) : null;
+  const card = document.createElement("div");
+  card.className = "article-card";
+  card.innerHTML = `
+    <div class="thumb">${TYPE_ICON[type]}</div>
+    <div class="article-content">
+      ${tag ? `<span class="article-tag" style="background:${tag.color}22;color:${tag.color}">${escapeHtml(tag.label)}</span>` : ""}
+      <h4>${escapeHtml(file.name)}</h4>
+      <div class="article-meta">อัปเดต ${formatDate(file.modifiedTime)}</div>
+    </div>
+  `;
+  card.addEventListener("click", async () => {
+    const parentId = (file.parents || [])[0];
+    if (parentId) {
+      await ensureFolderIndex();
+      state.path = pathFromFolderIndex(parentId);
+      state.currentFolderId = parentId;
+      state.homeView = "sections";
+      await loadFolder(parentId);
+    }
+    openPreview(file);
+  });
+  return card;
+}
+
+/**
+ * The rich, stacked homepage: hero+search, department "categories", an SOP
+ * call-to-action band, a latest-files preview, and an experts preview —
+ * mirrors the reference mockup's structure while using our real data.
+ */
+function renderHomeSections() {
+  const tags = window.APP_CONFIG.CONTENT_TAGS || [];
+  const sopTag = tags.find((t) => t.key === "sop");
+  const experts = (window.APP_CONFIG.EXPERTS || []).slice(0, 4);
+
+  homeSectionsEl.innerHTML = `
+    <section class="home-hero">
+      <h1>ทุกคำตอบเพื่องานที่แม่นยำ ปลอดภัย และมีประสิทธิภาพ</h1>
+      <p>ค้นหา SOP คู่มือปฏิบัติงาน และบทเรียนจากประสบการณ์จริง ได้ในไม่กี่วินาที เพื่อสนับสนุนการทำงานของทีมวิศวกรและปฏิบัติการทุกวัน</p>
+      <div class="home-search-box">
+        <input id="hero-search-input" type="text" placeholder="ค้นหาทั้งคลัง — ชื่อไฟล์หรือข้อความในเอกสาร…" autocomplete="off" />
+        <button id="hero-search-btn">ค้นหาความรู้ทันที</button>
+      </div>
+      <div class="home-quick-links" id="hero-quick-links"></div>
+    </section>
+
+    <section class="home-section" id="categories-section">
+      <div class="home-section-header">
+        <div>
+          <h2>หมวดหมู่ความรู้หลัก</h2>
+          <div class="home-sub">เลือกแผนกที่ตรงกับงานของคุณ</div>
+        </div>
+      </div>
+      <div class="home-categories" id="home-categories"></div>
+    </section>
+
+    ${
+      sopTag
+        ? `<section class="home-section" style="padding-top:0">
+      <div class="sop-band">
+        <div class="text">
+          <h2>คู่มือ / SOP / แบบฟอร์มมาตรฐาน</h2>
+          <p>รวมเอกสารปฏิบัติงานและแบบฟอร์มที่ใช้บ่อยที่สุด ติดแท็กไว้ให้ค้นหาได้จากทุกแผนก</p>
+        </div>
+        <button id="sop-band-btn">เข้าสู่คลังเอกสาร SOP →</button>
+      </div>
+    </section>`
+        : ""
+    }
+
+    <section class="home-section" id="articles-section">
+      <div class="home-section-header">
+        <div>
+          <h2>อัปเดตล่าสุด</h2>
+          <div class="home-sub">ไฟล์ที่แก้ไขล่าสุดจากทุกแผนก</div>
+        </div>
+        <button class="home-view-all" id="articles-view-all">ดูทั้งหมด →</button>
+      </div>
+      <div class="home-articles" id="home-articles">
+        <div class="search-loading">กำลังโหลด…</div>
+      </div>
+    </section>
+
+    <section class="home-section" id="experts-section">
+      <div class="home-section-header">
+        <div>
+          <h2>ผู้เชี่ยวชาญ / ชุมชนความรู้</h2>
+          <div class="home-sub">ติดต่อผู้เชี่ยวชาญในแต่ละด้านได้โดยตรง</div>
+        </div>
+        <button class="home-view-all" id="experts-view-all">ดูทั้งหมด →</button>
+      </div>
+      <div class="home-experts" id="home-experts"></div>
+    </section>
+
+    <footer class="home-footer">
+      <div class="home-footer-grid">
+        <div>
+          <h5>เกี่ยวกับคลังความรู้</h5>
+          <a href="#" id="footer-readme-link">แนวทางการใช้งาน</a>
+        </div>
+        <div>
+          <h5>แผนก</h5>
+          ${(window.APP_CONFIG.DEPARTMENTS || []).slice(0, 3).map((d) => `<a href="#" class="footer-dept-link" data-name="${escapeHtml(d)}">${escapeHtml(d)}</a>`).join("")}
+        </div>
+        <div>
+          <h5>เอกสาร</h5>
+          ${tags.slice(0, 3).map((t) => `<a href="#" class="footer-tag-link" data-key="${t.key}">${escapeHtml(t.label)}</a>`).join("")}
+        </div>
+        <div>
+          <h5>ติดต่อ</h5>
+          <a href="#" id="footer-experts-link">ผู้เชี่ยวชาญ KM</a>
+        </div>
+      </div>
+      <div class="home-footer-bottom">© ${new Date().getFullYear() + 543} ${escapeHtml(window.APP_CONFIG.ROOT_LABEL || "คลังความรู้องค์กร")} — พัฒนาเพื่อสนับสนุนการทำงานของทีมวิศวกรและปฏิบัติการ</div>
+    </footer>
+  `;
+
+  // --- categories: real department folders as clickable cards ---
+  const catsEl = $("home-categories");
+  getSortedDepartmentFolders().forEach((f) => catsEl.appendChild(buildCard(f, true, false)));
+
+  // --- hero search: reuses the exact same debounced search pipeline ---
+  const heroInput = $("hero-search-input");
+  const runHeroSearch = () => {
+    const val = heroInput.value;
+    searchInput.value = val;
+    searchInput.dispatchEvent(new Event("input", { bubbles: true }));
+  };
+  $("hero-search-btn").addEventListener("click", runHeroSearch);
+  heroInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") runHeroSearch();
+  });
+
+  // --- hero quick links: one pill per content tag ---
+  $("hero-quick-links").innerHTML = tags
+    .map((t) => `<button data-key="${t.key}">${escapeHtml(t.label)}</button>`)
+    .join("");
+  $("hero-quick-links").querySelectorAll("button").forEach((btn) => {
+    btn.addEventListener("click", () => selectHomeView(btn.dataset.key));
+  });
+
+  // --- SOP band CTA ---
+  if (sopTag) {
+    $("sop-band-btn").addEventListener("click", () => selectHomeView("sop"));
+  }
+
+  // --- "view all" links ---
+  $("articles-view-all").addEventListener("click", () => selectHomeView("latest"));
+  $("experts-view-all").addEventListener("click", () => selectHomeView("experts"));
+  $("footer-experts-link").addEventListener("click", (e) => {
+    e.preventDefault();
+    selectHomeView("experts");
+  });
+  homeSectionsEl.querySelectorAll(".footer-tag-link").forEach((a) => {
+    a.addEventListener("click", (e) => {
+      e.preventDefault();
+      selectHomeView(a.dataset.key);
+    });
+  });
+  homeSectionsEl.querySelectorAll(".footer-dept-link").forEach((a) => {
+    a.addEventListener("click", async (e) => {
+      e.preventDefault();
+      const folder = state.files.find((f) => f.mimeType === FOLDER_MIME && f.name === a.dataset.name);
+      if (!folder) return;
+      state.path.push({ id: folder.id, name: folder.name });
+      state.currentFolderId = folder.id;
+      await loadFolder(folder.id);
+    });
+  });
+
+  // --- experts preview (static config data, no fetch needed) ---
+  const expertsEl = $("home-experts");
+  if (!experts.length) {
+    expertsEl.innerHTML = `<div class="empty-sub">ยังไม่มีข้อมูลผู้เชี่ยวชาญ — เพิ่มได้ที่ EXPERTS ใน config.js</div>`;
+  } else {
+    experts.forEach((p) => expertsEl.appendChild(expertCardEl(p)));
+  }
+
+  // --- latest-files preview (async; guard against a stale response landing
+  // after the user has already navigated away from the homepage) ---
+  loadLatestPreview();
+}
+
+async function loadLatestPreview() {
+  const requestedView = state.homeView;
+  try {
+    await ensureFolderIndex();
+    const fields = "files(id,name,mimeType,thumbnailLink,parents,modifiedTime,size,properties),nextPageToken";
+    const q = `trashed=false and mimeType != '${FOLDER_MIME}'`;
+    const url = `${DRIVE_FILES_URL}?q=${encodeURIComponent(q)}&fields=${encodeURIComponent(fields)}&pageSize=30&orderBy=modifiedTime desc`;
+    const res = await driveFetch(url);
+    const data = await res.json();
+    const preview = (data.files || [])
+      .filter((f) => (f.parents || []).some((p) => isDescendantOfRoot(p)))
+      .slice(0, 6);
+
+    // The user may have navigated to a different Home tab while this was
+    // in flight — don't overwrite whatever they're looking at now.
+    if (state.homeView !== requestedView || !isAtRoot()) return;
+    const el = $("home-articles");
+    if (!el) return;
+    el.innerHTML = "";
+    if (!preview.length) {
+      el.innerHTML = `<div class="empty-sub">ยังไม่มีไฟล์ในคลัง</div>`;
+      return;
+    }
+    preview.forEach((f) => el.appendChild(articleCardEl(f)));
+  } catch (err) {
+    console.error(err);
+    const el = $("home-articles");
+    if (el) el.innerHTML = `<div class="empty-sub">โหลดรายการล่าสุดไม่สำเร็จ</div>`;
+  }
 }
 
 function clearSearch() {
@@ -845,6 +1091,7 @@ searchInput.addEventListener("input", (e) => {
 =================================================================== */
 const fileInput = $("file-input");
 $("upload-btn").addEventListener("click", () => fileInput.click());
+$("fab-upload").addEventListener("click", () => fileInput.click());
 fileInput.addEventListener("change", (e) => {
   handleFiles(Array.from(e.target.files));
   fileInput.value = "";
@@ -1053,7 +1300,7 @@ function registerServiceWorker() {
   // Service workers require HTTPS (localhost is exempt). Fails silently
   // and harmlessly if served over plain http on a real domain.
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("sw.js?v=5").catch((err) => {
+    navigator.serviceWorker.register("sw.js?v=6").catch((err) => {
       console.warn("Service worker registration skipped:", err.message);
     });
   });

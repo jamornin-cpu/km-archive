@@ -1633,15 +1633,65 @@ $("modal-rename-btn").addEventListener("click", async () => {
   }
 });
 
-$("modal-delete-btn").addEventListener("click", async () => {
+// Native Google Docs/Sheets/Slides can't be downloaded as raw bytes — they
+// have to be *exported* to a real file format first.
+const GOOGLE_EXPORT_FORMATS = {
+  "application/vnd.google-apps.document": {
+    mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ext: ".docx",
+  },
+  "application/vnd.google-apps.spreadsheet": {
+    mime: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ext: ".xlsx",
+  },
+  "application/vnd.google-apps.presentation": {
+    mime: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    ext: ".pptx",
+  },
+};
+
+async function downloadFile(file) {
+  let url;
+  let filename = file.name;
+  const exportFmt = GOOGLE_EXPORT_FORMATS[file.mimeType];
+
+  if (exportFmt) {
+    url = `${DRIVE_FILES_URL}/${file.id}/export?mimeType=${encodeURIComponent(exportFmt.mime)}`;
+    if (!filename.toLowerCase().endsWith(exportFmt.ext)) filename += exportFmt.ext;
+  } else if (file.mimeType && file.mimeType.startsWith("application/vnd.google-apps.")) {
+    // Other native types (Drawings, Forms, Sites, ...) — PDF is the safest
+    // universal export target.
+    url = `${DRIVE_FILES_URL}/${file.id}/export?mimeType=application/pdf`;
+    if (!filename.toLowerCase().endsWith(".pdf")) filename += ".pdf";
+  } else {
+    url = `${DRIVE_FILES_URL}/${file.id}?alt=media`;
+  }
+
+  const res = await driveFetch(url);
+  const blob = await res.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = objectUrl;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(objectUrl), 10000);
+}
+
+$("modal-download-btn").addEventListener("click", async (e) => {
   if (!activeFile) return;
-  if (!confirm(`ลบ "${activeFile.name}" ถาวรหรือไม่?`)) return;
+  const btn = e.currentTarget;
+  const original = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "กำลังดาวน์โหลด…";
   try {
-    await deleteFile(activeFile.id);
-    closePreview();
-    loadFolder(state.currentFolderId);
+    await downloadFile(activeFile);
   } catch (err) {
-    alert("ลบไม่สำเร็จ: " + err.message);
+    alert("ดาวน์โหลดไม่สำเร็จ: " + err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = original;
   }
 });
 
@@ -1653,7 +1703,7 @@ function registerServiceWorker() {
   // Service workers require HTTPS (localhost is exempt). Fails silently
   // and harmlessly if served over plain http on a real domain.
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("sw.js?v=8").catch((err) => {
+    navigator.serviceWorker.register("sw.js?v=9").catch((err) => {
       console.warn("Service worker registration skipped:", err.message);
     });
   });

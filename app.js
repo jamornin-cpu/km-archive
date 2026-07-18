@@ -120,6 +120,8 @@ function signOut() {
   state.homeResults = [];
   state.searchMode = false;
   state.folderIndex = null;
+  const vc = $("visit-counter");
+  if (vc) vc.hidden = true;
   app.hidden = true;
   gate.hidden = false;
 }
@@ -136,6 +138,75 @@ async function onSignedIn() {
   await ensureDepartments(state.rootFolderId);
   await loadFolder(state.currentFolderId);
   ensureFolderIndex(); // warm cache in the background; not awaited on purpose
+  incrementVisitCount(); // small stats counter; not awaited on purpose
+}
+
+/**
+ * Tiny visit counter — stored as a JSON file (_km_stats.json) sitting in
+ * the library root on Drive itself, no separate backend needed. Every
+ * successful sign-in reads it, bumps totalVisits by one, and writes it
+ * back. Shown as a small badge in the corner.
+ *
+ * Like the document-numbering scheme, this is a "read then write" counter:
+ * two people signing in at the exact same instant could in theory both
+ * read the same starting number and one increment could get overwritten.
+ * Fine for a rough visit count on a small internal tool — not meant to be
+ * an exact analytics platform.
+ */
+const STATS_FILENAME = "_km_stats.json";
+
+async function getOrCreateStatsFileId() {
+  const q = `name = '${STATS_FILENAME}' and '${state.rootFolderId}' in parents and trashed=false`;
+  const url = `${DRIVE_FILES_URL}?q=${encodeURIComponent(q)}&fields=${encodeURIComponent("files(id)")}&pageSize=1`;
+  const res = await driveFetch(url);
+  const data = await res.json();
+  if (data.files && data.files.length) return data.files[0].id;
+
+  const metadata = { name: STATS_FILENAME, parents: [state.rootFolderId] };
+  const initial = JSON.stringify({ totalVisits: 0, firstVisit: new Date().toISOString(), lastVisit: null });
+  const boundary = "-------drivearchive" + Date.now();
+  const body =
+    `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n` +
+    `--${boundary}\r\nContent-Type: application/json\r\n\r\n${initial}\r\n--${boundary}--`;
+  const res2 = await driveFetch(`${DRIVE_UPLOAD_URL}?uploadType=multipart&fields=id`, {
+    method: "POST",
+    headers: { "Content-Type": `multipart/related; boundary=${boundary}` },
+    body,
+  });
+  const created = await res2.json();
+  return created.id;
+}
+
+async function incrementVisitCount() {
+  try {
+    const fileId = await getOrCreateStatsFileId();
+    let stats;
+    try {
+      const res = await driveFetch(`${DRIVE_FILES_URL}/${fileId}?alt=media`);
+      stats = await res.json();
+    } catch {
+      stats = { totalVisits: 0, firstVisit: new Date().toISOString() };
+    }
+    stats.totalVisits = (stats.totalVisits || 0) + 1;
+    stats.lastVisit = new Date().toISOString();
+
+    await driveFetch(`${DRIVE_UPLOAD_URL}/${fileId}?uploadType=media`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(stats),
+    });
+
+    renderVisitCounter(stats.totalVisits);
+  } catch (err) {
+    console.error("visit counter failed:", err);
+  }
+}
+
+function renderVisitCounter(n) {
+  const el = $("visit-counter");
+  if (!el) return;
+  el.textContent = `👁 เข้าชมแล้ว ${n.toLocaleString("th-TH")} ครั้ง`;
+  el.hidden = false;
 }
 
 /**
@@ -193,7 +264,7 @@ async function listFolder(folderId) {
   let all = [];
   let pageToken = "";
   do {
-    const q = encodeURIComponent(`'${folderId}' in parents and trashed=false`);
+    const q = encodeURIComponent(`'${folderId}' in parents and trashed=false and name != '${STATS_FILENAME}'`);
     const url = `${DRIVE_FILES_URL}?q=${q}&fields=${encodeURIComponent(fields)}&pageSize=200&orderBy=folder,name_natural${pageToken ? `&pageToken=${pageToken}` : ""}`;
     const res = await driveFetch(url);
     const data = await res.json();
@@ -375,7 +446,7 @@ async function loadLatestFiles() {
   try {
     await ensureFolderIndex();
     const fields = "files(id,name,mimeType,thumbnailLink,webViewLink,webContentLink,parents,modifiedTime,size,properties),nextPageToken";
-    const q = `trashed=false and mimeType != '${FOLDER_MIME}'`;
+    const q = `trashed=false and mimeType != '${FOLDER_MIME}' and name != '${STATS_FILENAME}'`;
     let all = [];
     let pageToken = "";
     // Pull a bit more than we need, since some results will be outside our
@@ -686,7 +757,7 @@ async function loadRegistry() {
     // there's no "this property key exists, any value" query. So we fetch
     // every non-folder file in the library and filter for docCode
     // ourselves, same approach as the dashboard stats.
-    const q = `trashed=false and mimeType != '${FOLDER_MIME}'`;
+    const q = `trashed=false and mimeType != '${FOLDER_MIME}' and name != '${STATS_FILENAME}'`;
     let all = [];
     let pageToken = "";
     const HARD_CAP = 2000;
@@ -864,7 +935,7 @@ function topLevelDeptFolderId(parentId) {
 async function computeDashboardStats() {
   await ensureFolderIndex();
   const fields = "files(id,mimeType,parents,properties),nextPageToken";
-  const q = `trashed=false and mimeType != '${FOLDER_MIME}'`;
+  const q = `trashed=false and mimeType != '${FOLDER_MIME}' and name != '${STATS_FILENAME}'`;
   let all = [];
   let pageToken = "";
   const HARD_CAP = 2000;
@@ -1194,7 +1265,7 @@ async function loadLatestPreview() {
   try {
     await ensureFolderIndex();
     const fields = "files(id,name,mimeType,thumbnailLink,parents,modifiedTime,size,properties),nextPageToken";
-    const q = `trashed=false and mimeType != '${FOLDER_MIME}'`;
+    const q = `trashed=false and mimeType != '${FOLDER_MIME}' and name != '${STATS_FILENAME}'`;
     const url = `${DRIVE_FILES_URL}?q=${encodeURIComponent(q)}&fields=${encodeURIComponent(fields)}&pageSize=30&orderBy=modifiedTime desc`;
     const res = await driveFetch(url);
     const data = await res.json();
@@ -1710,7 +1781,7 @@ function registerServiceWorker() {
   // Service workers require HTTPS (localhost is exempt). Fails silently
   // and harmlessly if served over plain http on a real domain.
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("sw.js?v=10").catch((err) => {
+    navigator.serviceWorker.register("sw.js?v=11").catch((err) => {
       console.warn("Service worker registration skipped:", err.message);
     });
   });

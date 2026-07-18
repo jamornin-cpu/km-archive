@@ -427,9 +427,10 @@ async function renameFile(fileId, newName) {
   return res.json();
 }
 
-function uploadFile(file, parentId, onProgress) {
+function uploadFile(file, parentId, onProgress, overrideName, properties) {
   return new Promise((resolve, reject) => {
-    const metadata = { name: file.name, parents: [parentId] };
+    const metadata = { name: overrideName || file.name, parents: [parentId] };
+    if (properties) metadata.properties = properties;
     const boundary = "-------drivearchive" + Date.now();
     const delimiter = `\r\n--${boundary}\r\n`;
     const closeDelim = `\r\n--${boundary}--`;
@@ -448,7 +449,7 @@ function uploadFile(file, parentId, onProgress) {
         closeDelim;
 
       const xhr = new XMLHttpRequest();
-      xhr.open("POST", `${DRIVE_UPLOAD_URL}?uploadType=multipart&fields=id,name,mimeType`);
+      xhr.open("POST", `${DRIVE_UPLOAD_URL}?uploadType=multipart&fields=id,name,mimeType,properties`);
       xhr.setRequestHeader("Authorization", `Bearer ${state.accessToken}`);
       xhr.setRequestHeader("Content-Type", `multipart/related; boundary=${boundary}`);
       xhr.upload.onprogress = (e) => {
@@ -464,6 +465,69 @@ function uploadFile(file, parentId, onProgress) {
     reader.onerror = () => reject(new Error("Could not read file"));
     reader.readAsDataURL(file);
   });
+}
+
+/**
+ * Document numbering — "{TYPE}-{DEPT}-{NNN}", matching the latest house
+ * format (e.g. "WI-DES-001"). Numbering is scoped per type *and*
+ * department: DES's WI-001 and CON's WI-001 are independent counters.
+ * Scans the whole library for existing files already tagged with this
+ * exact (type, dept) pair, takes the highest sequence found, returns the
+ * next one.
+ *
+ * Note: like any "read max, then use max+1" scheme, two people generating
+ * a code for the same (type, dept) at the exact same moment could in
+ * theory get the same number. Fine for a small team; mention it if it
+ * ever bites.
+ */
+async function getMaxDocSeq(typeKey, deptCode) {
+  const fields = "files(properties),nextPageToken";
+  const q = `properties has { key='docType' and value='${typeKey}' } and properties has { key='docDept' and value='${deptCode}' } and trashed=false`;
+  let all = [];
+  let pageToken = "";
+  do {
+    const url = `${DRIVE_FILES_URL}?q=${encodeURIComponent(q)}&fields=${encodeURIComponent(fields)}&pageSize=1000${pageToken ? `&pageToken=${pageToken}` : ""}`;
+    const res = await driveFetch(url);
+    const data = await res.json();
+    all = all.concat(data.files || []);
+    pageToken = data.nextPageToken || "";
+  } while (pageToken);
+
+  let maxSeq = 0;
+  all.forEach((f) => {
+    const code = f.properties && f.properties.docCode;
+    if (!code) return;
+    const m = code.match(/-(\d+)$/);
+    if (m) maxSeq = Math.max(maxSeq, parseInt(m[1], 10));
+  });
+  return maxSeq;
+}
+
+/**
+ * Figures out which department the *current* folder belongs to, by
+ * matching state.path against DEPARTMENTS. Works whether you're sitting
+ * directly in a department folder or several subfolders deep inside one.
+ * Returns { name, code, index } or null if not inside any department.
+ */
+function currentDepartment() {
+  const depts = window.APP_CONFIG.DEPARTMENTS || [];
+  const codes = window.APP_CONFIG.DEPARTMENT_CODES || [];
+  for (const crumb of state.path) {
+    const idx = depts.findIndex((d) => d.trim().toLowerCase() === crumb.name.trim().toLowerCase());
+    if (idx !== -1) {
+      return { name: depts[idx], code: codes[idx] || "GEN", index: idx };
+    }
+  }
+  return null;
+}
+
+/** Builds the final filename: TYPE-DEPT-NNN[-RevRR]-title.ext */
+function buildDocFileName(docCode, rev, title, originalName) {
+  const dot = originalName.lastIndexOf(".");
+  const ext = dot > -1 ? originalName.slice(dot) : "";
+  const baseTitle = (title || (dot > -1 ? originalName.slice(0, dot) : originalName)).trim();
+  const revPart = rev && rev.trim() ? `-Rev${rev.trim()}` : "";
+  return `${docCode}${revPart}-${baseTitle}${ext}`;
 }
 
 /* ===================================================================
@@ -572,6 +636,7 @@ function renderHomeTabs() {
     { key: "departments", label: "แผนก", color: null },
     ...tags,
     { key: "latest", label: "อัปเดตล่าสุด", color: "#93A6BC" },
+    { key: "registry", label: "📋 ทะเบียนเอกสาร", color: "#6B4F9E" },
     { key: "experts", label: "ผู้เชี่ยวชาญ", color: "#4B5563" },
   ];
 
@@ -597,8 +662,51 @@ function selectHomeView(key) {
     renderGrid();
   } else if (key === "latest") {
     loadLatestFiles();
+  } else if (key === "registry") {
+    loadRegistry();
   } else {
     loadTaggedFiles(key);
+  }
+}
+
+/**
+ * "ทะเบียนเอกสาร" — every file anywhere in the library that has a
+ * document code (docCode property), listed together and sorted by code.
+ * This is the flat appendix/index the whole numbering system exists to
+ * produce.
+ */
+async function loadRegistry() {
+  loadingState.hidden = false;
+  grid.innerHTML = "";
+  emptyState.hidden = true;
+  try {
+    await ensureFolderIndex();
+    const fields = "files(id,name,mimeType,thumbnailLink,webViewLink,webContentLink,parents,modifiedTime,size,properties),nextPageToken";
+    const q = `properties has { key='docCode' } and trashed=false`;
+    let all = [];
+    let pageToken = "";
+    do {
+      const url = `${DRIVE_FILES_URL}?q=${encodeURIComponent(q)}&fields=${encodeURIComponent(fields)}&pageSize=1000${pageToken ? `&pageToken=${pageToken}` : ""}`;
+      const res = await driveFetch(url);
+      const data = await res.json();
+      all = all.concat(data.files || []);
+      pageToken = data.nextPageToken || "";
+    } while (pageToken);
+
+    const inLibrary = all.filter((f) => (f.parents || []).some((p) => isDescendantOfRoot(p)));
+    inLibrary.sort((a, b) => {
+      const ca = (a.properties && a.properties.docCode) || "";
+      const cb = (b.properties && b.properties.docCode) || "";
+      return ca.localeCompare(cb);
+    });
+
+    state.homeResults = inLibrary;
+    renderGrid();
+  } catch (err) {
+    console.error(err);
+    showTransientError(err.message);
+  } finally {
+    loadingState.hidden = true;
   }
 }
 
@@ -722,6 +830,155 @@ function renderGrid() {
   items.forEach((file) => grid.appendChild(buildCard(file, atRoot && !state.searchMode && !flatHome, showPath)));
 }
 
+/** Walks up from a file's parent folder to find which top-level department
+ * folder (a direct child of root) it lives under. Returns that folder's id,
+ * or null if the file isn't inside any department folder (e.g. sits loose
+ * at the library root). */
+function topLevelDeptFolderId(parentId) {
+  let cur = parentId;
+  let hops = 0;
+  while (cur && hops < 50) {
+    const entry = state.folderIndex.get(cur);
+    if (!entry) return null;
+    if (entry.parentId === state.rootFolderId) return cur;
+    if (cur === state.rootFolderId) return null;
+    cur = entry.parentId;
+    hops++;
+  }
+  return null;
+}
+
+/**
+ * Dashboard: counts every non-folder file under the library root, bucketed
+ * by which department folder it lives in and by content tag. Pulls the
+ * whole library file list once (paginated, capped) rather than one query
+ * per department — cheaper and avoids Drive query-length limits.
+ */
+async function computeDashboardStats() {
+  await ensureFolderIndex();
+  const fields = "files(id,mimeType,parents,properties),nextPageToken";
+  const q = `trashed=false and mimeType != '${FOLDER_MIME}'`;
+  let all = [];
+  let pageToken = "";
+  const HARD_CAP = 2000;
+  do {
+    const url = `${DRIVE_FILES_URL}?q=${encodeURIComponent(q)}&fields=${encodeURIComponent(fields)}&pageSize=1000${pageToken ? `&pageToken=${pageToken}` : ""}`;
+    const res = await driveFetch(url);
+    const data = await res.json();
+    all = all.concat(data.files || []);
+    pageToken = data.nextPageToken || "";
+  } while (pageToken && all.length < HARD_CAP);
+
+  const inLibrary = all.filter((f) => (f.parents || []).some((p) => isDescendantOfRoot(p)));
+
+  const deptCounts = new Map(); // folderId -> count
+  const tagCounts = new Map(); // tagKey -> count
+  let uncategorized = 0;
+
+  inLibrary.forEach((f) => {
+    const parentId = (f.parents || [])[0];
+    const deptId = parentId ? topLevelDeptFolderId(parentId) : null;
+    if (deptId) {
+      deptCounts.set(deptId, (deptCounts.get(deptId) || 0) + 1);
+    } else {
+      uncategorized++;
+    }
+    const tagKey = f.properties && f.properties.kmTag;
+    if (tagKey) tagCounts.set(tagKey, (tagCounts.get(tagKey) || 0) + 1);
+  });
+
+  const byDept = getSortedDepartmentFolders().map((folder, idx) => ({
+    id: folder.id,
+    name: folder.name,
+    icon: (window.APP_CONFIG.DEPARTMENT_ICONS || [])[idx] || "📁",
+    colorIdx: idx % 6,
+    count: deptCounts.get(folder.id) || 0,
+  }));
+
+  return {
+    total: inLibrary.length,
+    capped: all.length >= HARD_CAP,
+    byDept,
+    uncategorized,
+    tagCounts,
+  };
+}
+
+function dashboardSectionHtml() {
+  return `
+    <section class="home-section" id="dashboard-section">
+      <div class="home-section-header">
+        <div>
+          <h2>แดชบอร์ดสรุปเอกสาร</h2>
+          <div class="home-sub">ภาพรวมจำนวนเอกสารแยกตามส่วนงาน</div>
+        </div>
+      </div>
+      <div class="dashboard-overview" id="dashboard-overview">
+        <div class="search-loading">กำลังนับจำนวนเอกสาร…</div>
+      </div>
+      <div class="dashboard-grid" id="dashboard-grid"></div>
+    </section>
+  `;
+}
+
+async function loadDashboard() {
+  const requestedView = state.homeView;
+  try {
+    const stats = await computeDashboardStats();
+    if (state.homeView !== requestedView || !isAtRoot()) return;
+
+    const overviewEl = $("dashboard-overview");
+    const gridEl = $("dashboard-grid");
+    if (!overviewEl || !gridEl) return;
+
+    const activeDepts = stats.byDept.filter((d) => d.count > 0).length;
+    overviewEl.innerHTML = `
+      <div class="dashboard-overview-stat"><div class="num">${stats.total}${stats.capped ? "+" : ""}</div><div class="lbl">เอกสารทั้งหมด</div></div>
+      <div class="dashboard-overview-stat"><div class="num">${activeDepts}/${stats.byDept.length}</div><div class="lbl">แผนกที่มีเอกสาร</div></div>
+      <div class="dashboard-overview-stat"><div class="num">${stats.tagCounts.get("sop") || 0}</div><div class="lbl">SOP ที่ติดแท็ก</div></div>
+      <div class="dashboard-overview-stat"><div class="num">${stats.uncategorized}</div><div class="lbl">ไฟล์นอกแผนก</div></div>
+    `;
+
+    gridEl.innerHTML = "";
+    stats.byDept.forEach((d) => {
+      const card = document.createElement("div");
+      card.className = "dashboard-card";
+      card.style.setProperty("--dept-color", ["#3E7CB1", "#C08A2E", "#B1603E", "#2F8F6B", "#6B6FA6", "#7C8A4C"][d.colorIdx]);
+      card.innerHTML = `
+        <div class="dc-icon">${d.icon}</div>
+        <div class="dc-body">
+          <div class="dc-count">${d.count}</div>
+          <div class="dc-name">${escapeHtml(d.name)}</div>
+        </div>
+      `;
+      card.addEventListener("click", async () => {
+        state.path.push({ id: d.id, name: d.name });
+        state.currentFolderId = d.id;
+        await loadFolder(d.id);
+      });
+      card.style.cursor = "pointer";
+      gridEl.appendChild(card);
+    });
+
+    // annotate category cards with counts (match by department name)
+    document.querySelectorAll("#home-categories .card-dept").forEach((cardEl) => {
+      const nameEl = cardEl.querySelector(".card-name-dept");
+      if (!nameEl) return;
+      const match = stats.byDept.find((d) => d.name === nameEl.textContent);
+      if (match && !cardEl.querySelector(".card-count-badge")) {
+        const badge = document.createElement("div");
+        badge.className = "card-count-badge";
+        badge.textContent = `${match.count} ไฟล์`;
+        nameEl.insertAdjacentElement("afterend", badge);
+      }
+    });
+  } catch (err) {
+    console.error(err);
+    const overviewEl = $("dashboard-overview");
+    if (overviewEl) overviewEl.innerHTML = `<div class="empty-sub">โหลดแดชบอร์ดไม่สำเร็จ</div>`;
+  }
+}
+
 function getSortedDepartmentFolders() {
   return state.files
     .filter((f) => f.mimeType === FOLDER_MIME)
@@ -784,6 +1041,8 @@ function renderHomeSections() {
       </div>
       <div class="home-quick-links" id="hero-quick-links"></div>
     </section>
+
+    ${dashboardSectionHtml()}
 
     <section class="home-section" id="categories-section">
       <div class="home-section-header">
@@ -920,6 +1179,7 @@ function renderHomeSections() {
   // --- latest-files preview (async; guard against a stale response landing
   // after the user has already navigated away from the homepage) ---
   loadLatestPreview();
+  loadDashboard();
 }
 
 async function loadLatestPreview() {
@@ -979,6 +1239,8 @@ function buildCard(file, atRoot = false, showPath = false) {
   const tagKey = file.properties && file.properties.kmTag;
   const tag = tagKey ? getTag(tagKey) : null;
   const tagHtml = tag ? `<span class="card-tag" style="--tag-color:${tag.color}">${escapeHtml(tag.label)}</span>` : "";
+  const docCode = file.properties && file.properties.docCode;
+  const codeHtml = docCode ? `<span class="card-doccode">${escapeHtml(docCode)}</span>` : "";
 
   if (deptIdx !== -1) {
     const icons = window.APP_CONFIG.DEPARTMENT_ICONS || [];
@@ -995,7 +1257,7 @@ function buildCard(file, atRoot = false, showPath = false) {
     card.innerHTML = `
       ${thumbHtml}
       <div class="card-name">${escapeHtml(file.name)}</div>
-      ${tagHtml}
+      ${codeHtml}${tagHtml}
       <div class="card-path">${escapeHtml(pathLabel)}</div>
     `;
   } else {
@@ -1004,7 +1266,7 @@ function buildCard(file, atRoot = false, showPath = false) {
     card.innerHTML = `
       ${thumbHtml}
       <div class="card-name">${escapeHtml(file.name)}</div>
-      ${tagHtml}
+      ${codeHtml}${tagHtml}
       <div class="card-meta"><span>${meta}</span><span>${date}</span></div>
     `;
   }
@@ -1127,8 +1389,84 @@ window.addEventListener("drop", (e) => {
 
 function handleFiles(files) {
   if (!files.length) return;
+  showDocTypeChooser(files);
+}
+
+function showDocTypeChooser(files) {
+  const types = window.APP_CONFIG.DOCUMENT_TYPES || [];
+  const dept = currentDepartment();
+  const depts = window.APP_CONFIG.DEPARTMENTS || [];
+  const codes = window.APP_CONFIG.DEPARTMENT_CODES || [];
+
   uploadTray.hidden = false;
-  files.forEach((file) => {
+  uploadTray.innerHTML = `
+    <div class="doctype-chooser">
+      <div class="doctype-chooser-label">ติดรหัสเอกสารให้ไฟล์ชุดนี้ไหม? (${files.length} ไฟล์)</div>
+
+      <select id="doctype-select">
+        <option value="">ไม่ติดรหัส — อัปโหลดเฉยๆ</option>
+        ${types.map((t) => `<option value="${t.key}">${escapeHtml(t.label)}</option>`).join("")}
+      </select>
+
+      <div id="doctype-dept-row" class="doctype-dept-row" hidden>
+        ${
+          dept
+            ? `<span class="doctype-dept-detected">แผนก: <strong>${escapeHtml(dept.name)}</strong> (${dept.code})</span>`
+            : `<select id="doctype-dept-select">
+                 <option value="">— เลือกแผนกสำหรับเลขรหัส —</option>
+                 ${depts.map((d, i) => `<option value="${i}">${escapeHtml(d)} (${codes[i] || "GEN"})</option>`).join("")}
+               </select>`
+        }
+        <input id="doctype-rev-input" type="text" placeholder="Rev (ไม่บังคับ) เช่น 01" />
+      </div>
+
+      <button id="doctype-confirm-btn" class="btn btn-primary btn-sm">เริ่มอัปโหลด</button>
+      <button id="doctype-cancel-btn" class="btn btn-ghost btn-sm">ยกเลิก</button>
+    </div>
+  `;
+
+  const typeSelect = $("doctype-select");
+  const deptRow = $("doctype-dept-row");
+  typeSelect.addEventListener("change", () => {
+    deptRow.hidden = !typeSelect.value;
+  });
+
+  $("doctype-cancel-btn").addEventListener("click", () => {
+    uploadTray.innerHTML = "";
+    uploadTray.hidden = true;
+    fileInput.value = "";
+  });
+
+  $("doctype-confirm-btn").addEventListener("click", async () => {
+    const typeKey = typeSelect.value || null;
+    const rev = $("doctype-rev-input") ? $("doctype-rev-input").value : "";
+    let deptInfo = dept;
+    if (typeKey && !deptInfo) {
+      const sel = $("doctype-dept-select");
+      const idx = sel ? parseInt(sel.value, 10) : NaN;
+      if (Number.isNaN(idx)) {
+        alert("กรุณาเลือกแผนกก่อน เพื่อให้รันเลขรหัสได้ถูกต้อง");
+        return;
+      }
+      deptInfo = { name: depts[idx], code: codes[idx] || "GEN", index: idx };
+    }
+    uploadTray.innerHTML = "";
+    await startUploads(files, typeKey, deptInfo, rev);
+  });
+}
+
+async function startUploads(files, typeKey, deptInfo, rev) {
+  let nextSeq = null;
+  if (typeKey && deptInfo) {
+    try {
+      nextSeq = (await getMaxDocSeq(typeKey, deptInfo.code)) + 1;
+    } catch (err) {
+      alert("อ่านเลขรหัสล่าสุดไม่สำเร็จ: " + err.message + " — จะอัปโหลดแบบไม่ติดรหัสแทน");
+      typeKey = null;
+    }
+  }
+
+  files.forEach((file, i) => {
     const row = document.createElement("div");
     row.className = "upload-item";
     row.innerHTML = `
@@ -1140,18 +1478,33 @@ function handleFiles(files) {
     const fill = row.querySelector(".upload-item-fill");
     const status = row.querySelector(".upload-item-status");
 
-    uploadFile(file, state.currentFolderId, (pct) => {
-      fill.style.width = pct + "%";
-    })
+    let overrideName = null;
+    let properties = null;
+    if (typeKey && deptInfo && nextSeq !== null) {
+      const docCode = `${typeKey}-${deptInfo.code}-${String(nextSeq + i).padStart(3, "0")}`;
+      overrideName = buildDocFileName(docCode, rev, null, file.name);
+      properties = { docCode, docType: typeKey, docDept: deptInfo.code };
+      if (rev && rev.trim()) properties.docRev = rev.trim();
+    }
+
+    uploadFile(
+      file,
+      state.currentFolderId,
+      (pct) => {
+        fill.style.width = pct + "%";
+      },
+      overrideName,
+      properties
+    )
       .then(() => {
         row.classList.add("done");
         fill.style.width = "100%";
-        status.textContent = "Filed.";
+        status.textContent = overrideName ? `Filed as ${overrideName}` : "Filed.";
         loadFolder(state.currentFolderId);
         setTimeout(() => {
           row.remove();
           if (!uploadTray.children.length) uploadTray.hidden = true;
-        }, 2500);
+        }, 3500);
       })
       .catch((err) => {
         row.classList.add("error");
@@ -1300,7 +1653,7 @@ function registerServiceWorker() {
   // Service workers require HTTPS (localhost is exempt). Fails silently
   // and harmlessly if served over plain http on a real domain.
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("sw.js?v=6").catch((err) => {
+    navigator.serviceWorker.register("sw.js?v=8").catch((err) => {
       console.warn("Service worker registration skipped:", err.message);
     });
   });

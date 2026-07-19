@@ -1,153 +1,80 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="th">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-<title>คลังความรู้องค์กร | Knowledge Management</title>
-
-<!-- PWA -->
-<link rel="manifest" href="manifest.json" />
-<meta name="theme-color" content="#0B2545" />
-<meta name="background-color" content="#0B2545" />
-<link rel="icon" href="icons/icon-192.png" />
-<link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
-<meta name="apple-mobile-web-app-capable" content="yes" />
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-<meta name="apple-mobile-web-app-title" content="คลังความรู้" />
-<meta name="mobile-web-app-capable" content="yes" />
-
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Prompt:wght@500;600;700&family=Sarabun:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=15" />
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>KM Archive</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Prompt:wght@500;600;700&family=Sarabun:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-
-  <div id="ios-install-banner" class="ios-banner" hidden>
-    <span>ติดตั้งแอปนี้: กด <strong>แชร์ ⬆</strong> แล้วเลือก <strong>เพิ่มไปยังหน้าจอโฮม</strong></span>
-    <button id="ios-banner-close" aria-label="Close">✕</button>
-  </div>
-
-  <!-- ============ SIGN-IN GATE ============ -->
-  <section id="gate" class="gate">
-    <div class="gate-card">
-      <div class="gate-stamp">⚡ คลังความรู้องค์กร</div>
-      <h1>ทุกคำตอบเพื่องานที่แม่นยำ ปลอดภัย และมีประสิทธิภาพ</h1>
-      <p class="gate-sub">ค้นหา SOP คู่มือปฏิบัติงาน และบทเรียนจากประสบการณ์จริง ได้ในไม่กี่วินาที — ข้อมูลทั้งหมดเก็บอยู่ใน Google Drive ขององค์กร ไม่มีการคัดลอกออกไปที่อื่น</p>
-      <button id="signin-btn" class="btn btn-primary">เข้าสู่คลังความรู้ด้วย Google</button>
-      <p id="gate-error" class="gate-error" hidden></p>
-    </div>
-  </section>
-
-  <!-- ============ MAIN APP ============ -->
-  <div id="app" class="app" hidden>
-
+  <div class="app">
     <header class="topbar">
-      <div class="brand">
-        <span class="brand-mark">⚡</span>
-        <span class="brand-name">คลังความรู้องค์กร</span>
-      </div>
-
-      <nav id="breadcrumb" class="breadcrumb" aria-label="Folder path"></nav>
-
+      <div class="brand"><div class="brand-mark">▣</div><div class="brand-name">คลังความรู้</div></div>
+      <nav class="breadcrumb" id="breadcrumb"></nav>
       <div class="topbar-actions">
-        <div class="search-box">
-          <input id="search-input" type="text" placeholder="ค้นหาทั้งคลัง — ชื่อไฟล์หรือข้อความในเอกสาร…" autocomplete="off" />
-        </div>
-        <button id="new-folder-btn" class="btn btn-ghost" title="New folder">+ Folder</button>
-        <button id="upload-btn" class="btn btn-primary" title="Upload files">Upload</button>
-        <input id="file-input" type="file" multiple hidden />
-        <button id="install-btn" class="btn btn-ghost" title="Install app" hidden>⭳ Install</button>
-        <button id="signout-btn" class="btn btn-icon" title="Disconnect">⏻</button>
+        <div class="search-box"><input id="search-input" placeholder="ค้นหาทั้งคลัง — ชื่อไฟล์หรือชื่อเอกสาร..." /></div>
+        <button class="btn btn-ghost btn-sm" id="new-folder-btn">+ Folder</button>
+        <button class="btn btn-primary btn-sm" id="upload-btn">Upload</button>
+        <button class="btn btn-ghost btn-icon" id="install-btn">⬇</button>
+        <button class="btn btn-ghost btn-icon" id="signout-btn">⎋</button>
       </div>
     </header>
 
-    <!-- rich stacked homepage: hero / categories / SOP band / latest / experts / footer -->
-    <div id="home-sections" hidden></div>
+    <main class="content">
+      <section class="home-hero">
+        <h1>ทุกคำตอบเพื่องานที่แม่นยำ ปลอดภัย และมีประสิทธิภาพ</h1>
+        <p>ค้นหา SOP คู่มือปฏิบัติงาน และบทเรียนจากประสบการณ์จริง ได้ในไม่กี่วินาที — ข้อมูลทั้งหมดเก็บอยู่ใน Google Drive ขององค์กร ไม่มีการคัดลอกออกไปที่อื่น</p>
+        <div class="home-search-box"><input id="hero-search-input" placeholder="ค้นหาทั้งคลัง — ชื่อไฟล์หรือชื่อเอกสาร..." /><button id="hero-search-btn">ค้นหาความรู้ทันที</button></div>
+        <div class="home-quick-links" id="home-quick-links"></div>
+      </section>
 
-    <!-- drag & drop overlay -->
-    <div id="drop-overlay" class="drop-overlay" hidden>
-      <div class="drop-message">Drop files to file them in this folder</div>
-    </div>
+      <section class="home-section" id="dashboard-section">
+        <div class="home-section-header"><div><h2>แดชบอร์ดสรุปเอกสาร</h2><div class="home-sub">ภาพรวมจำนวนเอกสารแยกตามส่วนงาน</div></div></div>
+        <div class="dashboard-overview" id="dashboard-overview"></div>
+        <div class="dashboard-grid" id="dashboard-grid"></div>
+      </section>
 
-    <!-- upload progress tray -->
-    <div id="upload-tray" class="upload-tray" hidden></div>
+      <section class="home-section" id="categories-section">
+        <div class="home-section-header"><div><h2>หมวดหมู่ความรู้หลัก</h2><div class="home-sub">เลือกแผนกที่ตรงกับงานของคุณ</div></div></div>
+        <div class="home-categories" id="home-categories"></div>
+      </section>
 
-    <main class="content" id="main-content">
-      <div id="home-tabs" class="home-tabs" hidden></div>
+      <section class="home-section" id="articles-section">
+        <div class="home-section-header"><div><h2>เอกสารล่าสุด</h2><div class="home-sub">อัปเดตล่าสุดจากคลังจริง</div></div><button class="home-view-all" id="articles-view-all">ดูทั้งหมด</button></div>
+        <div class="home-articles" id="home-articles"></div>
+      </section>
 
-      <div id="filter-tabs" class="filter-tabs">
-        <button class="filter-tab active" data-filter="all">All</button>
-        <button class="filter-tab" data-filter="folder">Folders</button>
-        <button class="filter-tab" data-filter="document">Documents</button>
-        <button class="filter-tab" data-filter="image">Images</button>
-        <button class="filter-tab" data-filter="video">Video</button>
-        <button class="filter-tab" data-filter="other">Other</button>
-      </div>
-
-      <div id="search-status" class="search-status" hidden></div>
-
-      <div id="search-loading" class="search-loading" hidden>กำลังค้นหาในเอกสารทั้งคลัง…</div>
-
-      <div id="empty-state" class="empty-state" hidden>
-        <div class="empty-mark">◌</div>
-        <p>This folder is empty.</p>
-        <p class="empty-sub">Drag files here, or use Upload above.</p>
-      </div>
-
-      <div id="loading-state" class="loading-state" hidden>
-        <div class="loading-spinner"></div>
-        <p>Reading catalogue…</p>
-      </div>
-
-      <div id="grid" class="grid"></div>
+      <section class="home-section" id="experts-section">
+        <div class="home-section-header"><div><h2>ผู้เชี่ยวชาญประจำระบบ</h2><div class="home-sub">ติดต่อคนรับผิดชอบตามหมวดความรู้</div></div><button class="home-view-all" id="experts-view-all">ดูทั้งหมด</button></div>
+        <div class="home-experts" id="home-experts"></div>
+      </section>
     </main>
-
-    <button id="fab-upload" class="fab" title="อัปโหลดไฟล์ใหม่">＋</button>
-    <div id="visit-counter" class="visit-counter" hidden></div>
-
-    <!-- ============ POOMMY — chat search assistant ============ -->
-    <button id="poommy-bubble" class="poommy-bubble" title="ถามน้องพุมมี่">🤖</button>
-    <div id="poommy-panel" class="poommy-panel" hidden>
-      <div class="poommy-header">
-        <span class="poommy-avatar">🤖</span>
-        <div class="poommy-title">
-          <strong>น้องพุมมี่</strong>
-          <span>ผู้ช่วยค้นหาเอกสาร</span>
-        </div>
-        <button id="poommy-close-btn" class="poommy-close" aria-label="ปิด">✕</button>
-      </div>
-      <div id="poommy-messages" class="poommy-messages"></div>
-      <div class="poommy-input-row">
-        <input id="poommy-text-input" type="text" placeholder="พิมพ์หรือกดไมค์ถามได้เลย…" autocomplete="off" />
-        <button id="poommy-mic-btn" class="poommy-mic" title="พูดถาม" type="button">🎤</button>
-        <button id="poommy-send-btn" class="poommy-send" title="ส่ง" type="button">➤</button>
-      </div>
-    </div>
   </div>
 
-  <!-- ============ PREVIEW MODAL ============ -->
-  <div id="preview-modal" class="modal" hidden>
+  <button class="fab" id="fab-upload">＋</button>
+  <div class="drop-overlay" id="drop-overlay" hidden><div class="drop-message">วางไฟล์เพื่ออัปโหลด</div></div>
+  <input id="file-input" type="file" multiple hidden />
+
+  <div class="modal" id="preview-modal" hidden>
     <div class="modal-backdrop" id="modal-backdrop"></div>
     <div class="modal-panel">
       <div class="modal-head">
-        <span id="modal-title" class="modal-title"></span>
+        <div class="modal-title" id="modal-title"></div>
         <div class="modal-actions">
-          <button id="modal-download-btn" class="btn btn-primary btn-sm">⭳ Download</button>
-          <a id="modal-open-link" class="btn btn-ghost btn-sm" target="_blank" rel="noopener">Open in Drive ↗</a>
-          <button id="modal-rename-btn" class="btn btn-ghost btn-sm">Rename</button>
-          <button id="modal-close-btn" class="btn btn-icon" aria-label="Close">✕</button>
+          <button class="btn btn-ghost btn-sm" id="modal-open-link">Open in Drive</button>
+          <button class="btn btn-ghost btn-icon" id="modal-close">✕</button>
         </div>
       </div>
-      <div id="modal-body" class="modal-body"></div>
-      <div id="modal-doccode" class="modal-doccode"></div>
-      <div id="modal-tags" class="modal-tags"></div>
-      <div id="modal-meta" class="modal-meta"></div>
+      <div class="modal-body" id="modal-body"></div>
+      <div class="modal-meta" id="modal-meta"></div>
+      <div class="modal-doccode" id="modal-doccode"></div>
+      <div class="modal-tags" id="modal-tags"></div>
     </div>
   </div>
 
-  <script src="https://accounts.google.com/gsi/client" async defer></script>
-  <script src="config.js?v=15"></script>
-  <script src="app.js?v=15"></script>
+  <script src="app.js"></script>
 </body>
 </html>

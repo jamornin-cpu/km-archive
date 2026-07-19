@@ -6,6 +6,8 @@
 const state = {
   accessToken: null,
   tokenClient: null,
+  signedInAlready: false,    // true once onSignedIn() has run this page load
+  autoSignInAttempt: false,  // true while a *silent* (background) sign-in is in flight
   currentFolderId: null,     // null until resolved to root
   rootFolderId: null,
   path: [],                  // [{id, name}] breadcrumb trail
@@ -60,9 +62,15 @@ function initAuth() {
   // mobile data, etc.) — `google` would be undefined and everything below
   // would throw before the sign-in button's click handler is ever attached,
   // making the button silently do nothing. Wait for it instead of assuming.
-  waitForGoogleIdentity(() => setupAuth(), () => {
-    showGateError("โหลดระบบล็อกอินของ Google ไม่สำเร็จ — เช็คอินเทอร์เน็ต หรือลองรีเฟรชหน้านี้");
-  });
+  waitForGoogleIdentity(
+    () => {
+      setupAuth();
+      tryAutoSignIn();
+    },
+    () => {
+      showGateError("โหลดระบบล็อกอินของ Google ไม่สำเร็จ — เช็คอินเทอร์เน็ต หรือลองรีเฟรชหน้านี้");
+    }
+  );
 }
 
 function waitForGoogleIdentity(onReady, onTimeout, attempt = 0) {
@@ -78,17 +86,107 @@ function waitForGoogleIdentity(onReady, onTimeout, attempt = 0) {
   setTimeout(() => waitForGoogleIdentity(onReady, onTimeout, attempt + 1), 100);
 }
 
+/**
+ * Persistent login. Google access tokens are always short-lived (~1 hour)
+ * by design — there's no way to get a token that lasts "forever" without a
+ * backend server issuing refresh tokens, which this static app doesn't
+ * have. What we *can* do:
+ *   1. Remember the token (and its real expiry) across page loads, so
+ *      reopening the app within that hour skips the sign-in screen
+ *      entirely — no re-picking an account.
+ *   2. A few minutes before it expires, quietly ask Google for a new one
+ *      in the background (prompt:"") — if the browser still has an active
+ *      Google session, this usually succeeds with no visible popup at
+ *      all, and the person just keeps working uninterrupted.
+ *   3. If that silent refresh ever fails (session really did end, or the
+ *      browser blocks it — Safari's tracking protection can), we fall
+ *      back to the normal sign-in screen rather than showing a scary
+ *      error, since the person never asked for anything at that point.
+ */
+const TOKEN_STORAGE_KEY = "km_auth_token_v1";
+let tokenRefreshTimer = null;
+
+function saveTokenToStorage(token, expiresInSec) {
+  try {
+    localStorage.setItem(
+      TOKEN_STORAGE_KEY,
+      JSON.stringify({ token, expiresAt: Date.now() + (expiresInSec || 3600) * 1000 })
+    );
+  } catch (err) {
+    /* localStorage can be unavailable (private browsing, storage full) — persistence
+       just silently doesn't happen; sign-in still works normally each visit. */
+  }
+}
+function loadTokenFromStorage() {
+  try {
+    const raw = localStorage.getItem(TOKEN_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed && parsed.token && parsed.expiresAt ? parsed : null;
+  } catch (err) {
+    return null;
+  }
+}
+function clearTokenStorage() {
+  try {
+    localStorage.removeItem(TOKEN_STORAGE_KEY);
+  } catch (err) {
+    /* nothing to clear */
+  }
+}
+function scheduleTokenRefresh(expiresInSec) {
+  clearTimeout(tokenRefreshTimer);
+  const refreshInMs = Math.max((expiresInSec - 300) * 1000, 10000); // 5 min before expiry, floor 10s
+  tokenRefreshTimer = setTimeout(() => {
+    if (!state.tokenClient) return;
+    state.autoSignInAttempt = true;
+    state.tokenClient.requestAccessToken({ prompt: "" });
+  }, refreshInMs);
+}
+
+function tryAutoSignIn() {
+  const stored = loadTokenFromStorage();
+  if (stored && stored.expiresAt > Date.now() + 60000) {
+    // still good for at least another minute — just use it, no network round trip needed
+    state.accessToken = stored.token;
+    state.signedInAlready = true;
+    scheduleTokenRefresh(Math.floor((stored.expiresAt - Date.now()) / 1000));
+    onSignedIn();
+    return;
+  }
+  // expired or never signed in on this device — try one silent attempt
+  // before falling back to the manual sign-in screen
+  if (state.tokenClient) {
+    state.autoSignInAttempt = true;
+    state.tokenClient.requestAccessToken({ prompt: "" });
+  }
+}
+
 function setupAuth() {
   state.tokenClient = google.accounts.oauth2.initTokenClient({
     client_id: window.APP_CONFIG.CLIENT_ID,
     scope: window.APP_CONFIG.SCOPE,
     callback: (resp) => {
+      const wasAutoAttempt = state.autoSignInAttempt;
+      state.autoSignInAttempt = false;
+
       if (resp.error) {
+        // A silent background attempt failing isn't worth alarming anyone
+        // about — they just see the normal sign-in screen, same as if
+        // this feature didn't exist.
+        if (wasAutoAttempt) return;
         showGateError("เข้าสู่ระบบไม่สำเร็จ: " + resp.error);
         return;
       }
+
       state.accessToken = resp.access_token;
-      onSignedIn();
+      saveTokenToStorage(resp.access_token, resp.expires_in);
+      scheduleTokenRefresh(resp.expires_in || 3600);
+
+      if (!state.signedInAlready) {
+        state.signedInAlready = true;
+        onSignedIn();
+      }
     },
   });
 
@@ -113,7 +211,10 @@ function signOut() {
   if (state.accessToken) {
     google.accounts.oauth2.revoke(state.accessToken, () => {});
   }
+  clearTokenStorage();
+  clearTimeout(tokenRefreshTimer);
   state.accessToken = null;
+  state.signedInAlready = false;
   state.currentFolderId = null;
   state.path = [];
   state.homeView = "sections";
@@ -482,6 +583,7 @@ async function setFileTag(fileId, tagKey) {
     const hit = list.find((f) => f.id === fileId);
     if (hit) hit.properties = updated.properties || {};
   });
+  invalidateHomeOverviewCache();
   return updated;
 }
 
@@ -657,6 +759,23 @@ function navigateToCrumb(idx) {
   loadFolder(state.currentFolderId);
 }
 
+/** Jumps straight back to the rich Home page from anywhere in the app —
+ * a department folder several levels deep, a search, a tag/latest/registry
+ * flat view, all of it. */
+function goHome() {
+  state.searchMode = false;
+  state.query = "";
+  searchInput.value = "";
+  searchStatus.hidden = true;
+  state.homeView = "sections";
+  state.path = [{ id: state.rootFolderId, name: window.APP_CONFIG.ROOT_LABEL || "หน้าแรก" }];
+  state.currentFolderId = state.rootFolderId;
+  loadFolder(state.rootFolderId);
+}
+
+const homeBtnEl = $("home-btn");
+if (homeBtnEl) homeBtnEl.addEventListener("click", goHome);
+
 function classify(mimeType) {
   if (mimeType === FOLDER_MIME) return "folder";
   if (mimeType.startsWith("image/")) return "image";
@@ -697,9 +816,13 @@ function isHomeFlatView() {
 
 function renderHomeTabs() {
   const atRoot = isAtRoot();
-  const hideStrip = !atRoot || state.searchMode || state.homeView === "sections";
-  homeTabsEl.hidden = hideStrip;
-  if (hideStrip) return;
+  const onHomeSections = atRoot && !state.searchMode && state.homeView === "sections";
+  const homeBtn = $("home-btn");
+  if (homeBtn) homeBtn.hidden = onHomeSections;
+
+  const hideHomeTabsStrip = !atRoot || state.searchMode || state.homeView === "sections";
+  homeTabsEl.hidden = hideHomeTabsStrip;
+  if (hideHomeTabsStrip) return;
 
   const tags = window.APP_CONFIG.CONTENT_TAGS || [];
   const tabs = [
@@ -932,22 +1055,56 @@ function topLevelDeptFolderId(parentId) {
  * whole library file list once (paginated, capped) rather than one query
  * per department — cheaper and avoids Drive query-length limits.
  */
-async function computeDashboardStats() {
-  await ensureFolderIndex();
-  const fields = "files(id,mimeType,parents,properties),nextPageToken";
-  const q = `trashed=false and mimeType != '${FOLDER_MIME}' and name != '${STATS_FILENAME}'`;
-  let all = [];
-  let pageToken = "";
-  const HARD_CAP = 2000;
-  do {
-    const url = `${DRIVE_FILES_URL}?q=${encodeURIComponent(q)}&fields=${encodeURIComponent(fields)}&pageSize=1000${pageToken ? `&pageToken=${pageToken}` : ""}`;
-    const res = await driveFetch(url);
-    const data = await res.json();
-    all = all.concat(data.files || []);
-    pageToken = data.nextPageToken || "";
-  } while (pageToken && all.length < HARD_CAP);
+/**
+ * The dashboard and the "latest files" preview both need essentially the
+ * same thing — every non-folder file in the library — just aggregated
+ * differently. They used to each run their own full-library scan, which
+ * doubled the slowest part of loading the Home page for no reason. This
+ * fetches it once and caches briefly so bouncing back to Home within the
+ * cache window (e.g. after opening then closing a file) doesn't re-scan
+ * the whole library again.
+ */
+let homeOverviewCache = null; // { data, fetchedAt, capped }
+let homeOverviewPromise = null; // in-flight fetch, shared by concurrent callers
+const HOME_OVERVIEW_CACHE_MS = 2 * 60 * 1000; // 2 minutes
 
-  const inLibrary = all.filter((f) => (f.parents || []).some((p) => isDescendantOfRoot(p)));
+function invalidateHomeOverviewCache() {
+  homeOverviewCache = null;
+  homeOverviewPromise = null;
+}
+
+async function fetchLibraryFiles() {
+  if (homeOverviewCache && Date.now() - homeOverviewCache.fetchedAt < HOME_OVERVIEW_CACHE_MS) {
+    return homeOverviewCache.data;
+  }
+  if (homeOverviewPromise) return homeOverviewPromise;
+
+  homeOverviewPromise = (async () => {
+    await ensureFolderIndex();
+    const fields = "files(id,name,mimeType,thumbnailLink,parents,modifiedTime,size,properties),nextPageToken";
+    const q = `trashed=false and mimeType != '${FOLDER_MIME}' and name != '${STATS_FILENAME}'`;
+    let all = [];
+    let pageToken = "";
+    const HARD_CAP = 2000;
+    do {
+      const url = `${DRIVE_FILES_URL}?q=${encodeURIComponent(q)}&fields=${encodeURIComponent(fields)}&pageSize=1000${pageToken ? `&pageToken=${pageToken}` : ""}`;
+      const res = await driveFetch(url);
+      const data = await res.json();
+      all = all.concat(data.files || []);
+      pageToken = data.nextPageToken || "";
+    } while (pageToken && all.length < HARD_CAP);
+
+    const inLibrary = all.filter((f) => (f.parents || []).some((p) => isDescendantOfRoot(p)));
+    homeOverviewCache = { data: inLibrary, fetchedAt: Date.now(), capped: all.length >= HARD_CAP };
+    homeOverviewPromise = null;
+    return inLibrary;
+  })();
+
+  return homeOverviewPromise;
+}
+
+async function computeDashboardStats() {
+  const inLibrary = await fetchLibraryFiles();
 
   const deptCounts = new Map(); // folderId -> count
   const tagCounts = new Map(); // tagKey -> count
@@ -975,7 +1132,7 @@ async function computeDashboardStats() {
 
   return {
     total: inLibrary.length,
-    capped: all.length >= HARD_CAP,
+    capped: homeOverviewCache ? homeOverviewCache.capped : false,
     byDept,
     uncategorized,
     tagCounts,
@@ -1049,6 +1206,18 @@ async function loadDashboard() {
         badge.textContent = `${match.count} ไฟล์`;
         nameEl.insertAdjacentElement("afterend", badge);
       }
+    });
+
+    // annotate the hero quick-link pills with a count per content tag
+    document.querySelectorAll("#hero-quick-links button[data-key]").forEach((btn) => {
+      const count = stats.tagCounts.get(btn.dataset.key) || 0;
+      let badge = btn.querySelector(".quick-link-count");
+      if (!badge) {
+        badge = document.createElement("span");
+        badge.className = "quick-link-count";
+        btn.appendChild(badge);
+      }
+      badge.textContent = count;
     });
   } catch (err) {
     console.error(err);
@@ -1263,14 +1432,10 @@ function renderHomeSections() {
 async function loadLatestPreview() {
   const requestedView = state.homeView;
   try {
-    await ensureFolderIndex();
-    const fields = "files(id,name,mimeType,thumbnailLink,parents,modifiedTime,size,properties),nextPageToken";
-    const q = `trashed=false and mimeType != '${FOLDER_MIME}' and name != '${STATS_FILENAME}'`;
-    const url = `${DRIVE_FILES_URL}?q=${encodeURIComponent(q)}&fields=${encodeURIComponent(fields)}&pageSize=30&orderBy=modifiedTime desc`;
-    const res = await driveFetch(url);
-    const data = await res.json();
-    const preview = (data.files || [])
-      .filter((f) => (f.parents || []).some((p) => isDescendantOfRoot(p)))
+    const inLibrary = await fetchLibraryFiles();
+    const preview = inLibrary
+      .slice()
+      .sort((a, b) => new Date(b.modifiedTime) - new Date(a.modifiedTime))
       .slice(0, 6);
 
     // The user may have navigated to a different Home tab while this was
@@ -1775,6 +1940,7 @@ async function startUploads(files, typeKey, deptInfo, rev, targetFolderId) {
         row.classList.add("done");
         fill.style.width = "100%";
         status.textContent = overrideName ? `Filed as ${overrideName}` : "Filed.";
+        invalidateHomeOverviewCache();
         // only refresh the visible grid if we're actually looking at the
         // folder the file just landed in (e.g. uploading a department's
         // file while sitting on the Home page shouldn't yank you there)
@@ -1972,6 +2138,7 @@ function renderModalDocCode(file) {
       const updated = await updateFileNameAndProperties(activeFile.id, newName, properties);
       activeFile.name = updated.name;
       activeFile.properties = updated.properties || properties;
+      invalidateHomeOverviewCache();
 
       $("modal-title").textContent = activeFile.name;
       renderModalDocCode(activeFile);
@@ -2090,7 +2257,7 @@ function registerServiceWorker() {
   // Service workers require HTTPS (localhost is exempt). Fails silently
   // and harmlessly if served over plain http on a real domain.
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("sw.js?v=15").catch((err) => {
+    navigator.serviceWorker.register("sw.js?v=16").catch((err) => {
       console.warn("Service worker registration skipped:", err.message);
     });
   });

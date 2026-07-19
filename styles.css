@@ -164,6 +164,22 @@ a{ color:var(--navy); }
 }
 .brand-name{ font-family:var(--font-display); font-weight:700; font-size:17px; color:#fff; }
 
+.home-btn{
+  display:flex; align-items:center; gap:5px;
+  background:rgba(255,255,255,0.08);
+  border:1px solid rgba(255,255,255,0.18);
+  color:#dbe4f0;
+  font-family:var(--font-body);
+  font-size:12.5px;
+  font-weight:600;
+  padding:7px 12px;
+  border-radius:16px;
+  cursor:pointer;
+  flex-shrink:0;
+  transition:background .15s, color .15s;
+}
+.home-btn:hover{ background:var(--accent); border-color:var(--accent); color:var(--accent-ink); }
+
 .breadcrumb{
   flex:1; min-width:0;
   display:flex; align-items:center; gap:6px;
@@ -267,17 +283,35 @@ a{ color:var(--navy); }
   background:var(--panel);
   color:var(--ink);
   border-radius:var(--radius);
-  padding:20px 18px 16px;
+  padding:22px 20px 18px 24px;
   cursor:pointer;
-  min-height:150px;
+  min-height:158px;
   display:flex;
   flex-direction:column;
   justify-content:space-between;
-  box-shadow:0 2px 10px rgba(11,37,69,0.06);
-  transition:transform 0.15s, box-shadow 0.15s, border-color 0.15s;
-  border:1px solid var(--border);
+  box-shadow:0 3px 8px rgba(11,37,69,0.10), 0 1px 3px rgba(11,37,69,0.08);
+  transition:transform 0.18s cubic-bezier(.2,.8,.2,1), box-shadow 0.18s, border-color 0.18s;
+  border:1px solid var(--border-strong);
+  border-left:4px solid var(--border-strong);
+  overflow:hidden;
 }
-.card:hover{ transform:translateY(-3px); box-shadow:0 10px 24px rgba(11,37,69,0.14); border-color:var(--accent); }
+.card::before{
+  /* punch-hole detail — small archive/index-card touch */
+  content:"";
+  position:absolute;
+  top:13px; right:13px;
+  width:9px; height:9px;
+  border-radius:50%;
+  background:var(--bg);
+  box-shadow:inset 0 1px 2px rgba(11,37,69,0.28), 0 1px 0 rgba(255,255,255,0.7);
+  pointer-events:none;
+}
+.card:hover{
+  transform:translateY(-4px);
+  box-shadow:0 18px 34px rgba(11,37,69,0.22), 0 5px 12px rgba(11,37,69,0.12);
+  border-color:var(--accent);
+  border-left-color:var(--accent);
+}
 
 .card-icon{
   font-size:30px;
@@ -328,6 +362,7 @@ a{ color:var(--navy); }
 .card-dept{
   text-align:center;
   align-items:center;
+  border-left:1px solid var(--border-strong); /* dept cards already have their own top accent bar */
   padding:30px 20px 24px;
 }
 .card-dept .card-icon{
@@ -525,6 +560,17 @@ a{ color:var(--navy); }
 .home-quick-links{ display:flex; justify-content:center; gap:12px; margin-top:22px; flex-wrap:wrap; }
 .home-quick-links button{ background:rgba(255,255,255,0.12); border:1px solid rgba(255,255,255,0.3); color:#fff; padding:8px 16px; border-radius:20px; font-size:12.5px; cursor:pointer; font-family:var(--font-body); }
 .home-quick-links button:hover{ background:rgba(255,255,255,0.25); }
+.quick-link-count{
+  display:inline-block;
+  margin-left:7px;
+  background:var(--accent);
+  color:var(--accent-ink);
+  padding:1px 7px;
+  border-radius:10px;
+  font-size:10.5px;
+  font-weight:700;
+  font-family:var(--font-mono);
+}
 
 .home-section{ padding:44px 40px; max-width:1300px; margin:0 auto; }
 .home-section-header{ display:flex; justify-content:space-between; align-items:baseline; margin-bottom:24px; }
@@ -882,39 +928,54 @@ a{ color:var(--navy); }
    PREVIEW MODAL
 =================================================================== */
 .modal{ position:fixed; inset:0; z-index:50; display:flex; align-items:center; justify-content:center; padding:24px; }
-.modal-backdrop{ position:absolute; inset:0; background:rgba(11,37,69,0.6); }
+.modal-backdrop{ position:absolute; inset:0; background:rgba(6,20,38,0.72); backdrop-filter:blur(2px); }
 .modal-panel{
   position:relative;
   background:#fff;
   border-radius:14px;
-  width:100%; max-width:860px;
+  width:100%; max-width:900px;
   max-height:88vh;
   display:flex; flex-direction:column;
   overflow:hidden;
-  box-shadow:0 24px 60px rgba(11,37,69,0.35);
+  box-shadow:0 30px 70px rgba(6,20,38,0.5), 0 0 0 1px rgba(255,255,255,0.06);
+  border-top:4px solid var(--accent);
 }
 .modal-head{
   display:flex; align-items:center; justify-content:space-between;
-  padding:16px 20px;
-  border-bottom:1px solid var(--border);
+  padding:14px 10px 14px 20px;
+  border-bottom:1px solid rgba(255,255,255,0.08);
   gap:12px;
-  background:var(--navy);
+  background:linear-gradient(135deg, var(--navy), var(--navy-2));
+  flex-shrink:0;
 }
 .modal-title{
   font-family:var(--font-display);
   font-weight:700; font-size:15px;
   color:#fff;
   overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  flex:1;
+  min-width:0; /* the actual bug: without this a flex item won't shrink below
+                  its content width, so on narrow screens the title shoved
+                  the action buttons (including Close) off-screen instead
+                  of truncating with an ellipsis */
 }
-.modal-actions{ display:flex; align-items:center; gap:6px; flex-shrink:0; }
+.modal-actions{ display:flex; align-items:center; gap:4px; flex-shrink:0; }
+.modal-actions .btn{ flex-shrink:0; }
 .modal-actions .btn-ghost{ color:#dbe4f0; }
-.modal-actions .btn-ghost:hover{ color:#fff; background:rgba(255,255,255,0.1); }
-.modal-actions .btn-icon{ color:#dbe4f0; }
-.modal-actions .btn-icon:hover{ color:#fff; background:rgba(255,255,255,0.1); }
+.modal-actions .btn-ghost:hover{ color:#fff; background:rgba(255,255,255,0.12); }
+.modal-actions .btn-icon{ color:#dbe4f0; min-width:40px; min-height:40px; }
+.modal-actions .btn-icon:hover{ color:#fff; background:rgba(255,255,255,0.14); }
 .modal-actions .btn-danger{ color:#ff9d97; }
 .modal-actions .btn-danger:hover{ background:rgba(255,157,151,0.15); }
+#modal-close-btn{
+  font-size:16px;
+  font-weight:700;
+}
 .modal-body{
-  flex:1; overflow:auto; background:#0d1b2f;
+  flex:1; overflow:auto;
+  background:
+    repeating-linear-gradient(135deg, rgba(255,255,255,0.02) 0 2px, transparent 2px 22px),
+    #0d1b2f;
   display:flex; align-items:center; justify-content:center;
   min-height:300px;
 }
@@ -923,12 +984,14 @@ a{ color:var(--navy); }
 }
 .modal-body .no-preview{ color:#a9b8d0; font-size:13px; padding:60px; text-align:center; }
 .modal-meta{
-  padding:12px 20px;
+  padding:11px 20px;
   border-top:1px solid var(--border);
   font-family:var(--font-mono);
   font-size:11px;
   color:var(--ink-faint);
   display:flex; gap:18px; flex-wrap:wrap;
+  flex-shrink:0;
+  background:var(--bg);
 }
 
 /* ===================================================================
@@ -958,16 +1021,21 @@ a{ color:var(--navy); }
   .btn{ padding:11px 16px; min-height:40px; }
   .btn-icon{ padding:10px 12px; }
   .filter-tab{ padding:10px 4px; margin-right:16px; }
-  .card{ min-height:140px; }
+  .card{ min-height:132px; padding:18px 16px 14px 20px; }
+  .grid{ gap:12px; grid-template-columns:repeat(auto-fill, minmax(148px,1fr)); }
 
   .topbar{
     flex-wrap:wrap;
-    padding-left:calc(16px + env(safe-area-inset-left));
-    padding-right:calc(16px + env(safe-area-inset-right));
+    row-gap:10px;
+    padding-left:calc(14px + env(safe-area-inset-left));
+    padding-right:calc(14px + env(safe-area-inset-right));
     padding-bottom:12px;
   }
-  .breadcrumb{ order:3; width:100%; }
-  .topbar-actions{ width:100%; justify-content:space-between; }
+  .brand-name{ font-size:14.5px; }
+  .home-btn span{ display:none; } /* icon-only on mobile, keeps the row from wrapping badly */
+  .home-btn{ padding:7px 10px; }
+  .breadcrumb{ order:4; width:100%; }
+  .topbar-actions{ order:3; width:100%; justify-content:space-between; flex-wrap:wrap; row-gap:8px; }
   .search-box{ order:1; flex:1 1 100%; }
   .search-box input{ width:100%; }
   #new-folder-btn{ order:2; }
@@ -975,12 +1043,34 @@ a{ color:var(--navy); }
   #install-btn{ order:4; }
   #signout-btn{ order:5; }
 
-  .content{ padding:22px 18px 50px; }
-  .grid{ grid-template-columns:repeat(auto-fill, minmax(150px,1fr)); }
+  .content{ padding:18px 14px 50px; }
 
   .upload-tray{ left:12px; right:12px; width:auto; bottom:calc(16px + env(safe-area-inset-bottom)); }
+
+  /* ---- modal: full-screen, app-like viewer on small screens ---- */
   .modal{ padding:0; }
-  .modal-panel{ max-height:100vh; height:100%; border-radius:0; }
+  .modal-panel{ max-height:100vh; height:100%; border-radius:0; border-top-width:3px; }
+  .modal-head{
+    padding:calc(10px + env(safe-area-inset-top)) calc(6px + env(safe-area-inset-right)) 10px calc(14px + env(safe-area-inset-left));
+    gap:8px;
+  }
+  .modal-title{ font-size:13.5px; }
+  .modal-actions{ gap:2px; }
+  .modal-actions .btn{ padding:8px 9px; font-size:12px; }
+  .modal-actions span{ display:none; } /* keep only icons/short labels visible so Close never gets squeezed out */
+  .modal-meta{ padding:9px 14px; font-size:10px; gap:12px; padding-bottom:calc(9px + env(safe-area-inset-bottom)); }
+
+  /* ---- home hero / dashboard density on small screens ---- */
+  .home-hero{ padding:34px 18px 46px; }
+  .dashboard-overview, .dashboard-grid{ grid-template-columns:repeat(2,1fr); gap:10px; }
+  .home-categories{ gap:10px; }
+}
+
+@media (max-width: 420px){
+  .grid{ grid-template-columns:repeat(auto-fill, minmax(132px,1fr)); }
+  .home-categories, .home-articles, .home-experts, .dashboard-overview, .dashboard-grid{
+    grid-template-columns:repeat(2,1fr);
+  }
 }
 
 @media (prefers-reduced-motion: reduce){

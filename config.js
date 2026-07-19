@@ -59,4 +59,25 @@ window.APP_CONFIG = {
   //   dept: "แผนกเทคนิควิศวกรรม", icon: "👷",
   //   contactType: "email", contact: "somchai@example.com" },
   EXPERTS: [],
+
+  // One short code per department, same order as DEPARTMENTS above. Used
+  // in document numbers (see DOCUMENT_TYPES below) — falls back to "GEN"
+  // if this list is shorter than DEPARTMENTS.
+  DEPARTMENT_CODES: ["DES", "EST", "CONST", "TECH", "QC", "CS"],
+
+  // Document numbering — format is "{TYPE}-{DEPT}-{NNN}", e.g. "WI-DES-001".
+  // Numbering runs per type *and* department (DES's WI-001 is independent
+  // from CON's WI-001). The app auto-detects the department from whatever
+  // department folder you're currently inside when you upload — you don't
+  // pick it manually. The full filename becomes:
+  //   {TYPE}-{DEPT}-{NNN}-Rev{RR}-{document name}   (if a revision is given)
+  //   {TYPE}-{DEPT}-{NNN}-{document name}           (if not)
+  DOCUMENT_TYPES: [
+    { key: "WI", label: "Work Instruction (WI)" },
+    { key: "SOP", label: "Standard Operating Procedure (SOP)" },
+    { key: "QP", label: "Quality Procedure (QP)" },
+    { key: "FM", label: "แบบฟอร์ม (FM)" },
+    { key: "WK", label: "คู่มืองาน (WK)" },
+    { key: "DWG", label: "แบบก่อสร้าง (DWG)" },
+  ],
 };

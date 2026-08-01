@@ -471,23 +471,36 @@ async function performGlobalSearch(term) {
   grid.innerHTML = "";
   emptyState.hidden = true;
   try {
-    await ensureFolderIndex();
-
+    const folderIndex = await ensureFolderIndex();
+    const folderIds = Array.from(folderIndex.keys());
     const esc = escapeForDriveQuery(term.trim());
-    const q = `(name contains '${esc}' or fullText contains '${esc}') and trashed=false and mimeType != '${FOLDER_MIME}'`;
     const fields = "files(id,name,mimeType,thumbnailLink,webViewLink,webContentLink,parents,modifiedTime,size,properties),nextPageToken";
+    const CHUNK = 40;
 
     let all = [];
-    let pageToken = "";
-    do {
-      const url = `${DRIVE_FILES_URL}?q=${encodeURIComponent(q)}&fields=${encodeURIComponent(fields)}&pageSize=100&orderBy=modifiedTime desc${pageToken ? `&pageToken=${pageToken}` : ""}`;
-      const res = await driveFetch(url);
-      const data = await res.json();
-      all = all.concat(data.files || []);
-      pageToken = data.nextPageToken || "";
-    } while (pageToken && all.length < 300);
+    for (let i = 0; i < folderIds.length; i += CHUNK) {
+      const parentClause = folderIds
+        .slice(i, i + CHUNK)
+        .map((id) => `'${id}' in parents`)
+        .join(" or ");
+      const q = `(${parentClause}) and (name contains '${esc}' or fullText contains '${esc}') and trashed=false and mimeType != '${FOLDER_MIME}'`;
+      let pageToken = "";
+      do {
+        const url = `${DRIVE_FILES_URL}?q=${encodeURIComponent(q)}&fields=${encodeURIComponent(fields)}&pageSize=100&orderBy=modifiedTime desc${pageToken ? `&pageToken=${pageToken}` : ""}`;
+        const res = await driveFetch(url);
+        const data = await res.json();
+        all = all.concat(data.files || []);
+        pageToken = data.nextPageToken || "";
+      } while (pageToken);
+    }
 
-    state.searchResults = all.filter((f) => (f.parents || []).some((p) => isDescendantOfRoot(p)));
+    // de-dupe (a file whose parent chain crosses two chunked queries would
+    // otherwise never happen since each file has one parent — kept as a
+    // safety net) and sort by relevance-ish (most recently modified first)
+    const seen = new Set();
+    state.searchResults = all
+      .filter((f) => (seen.has(f.id) ? false : (seen.add(f.id), true)))
+      .sort((a, b) => new Date(b.modifiedTime) - new Date(a.modifiedTime));
     renderGrid();
   } catch (err) {
     console.error(err);
@@ -545,22 +558,11 @@ async function loadLatestFiles() {
   grid.innerHTML = "";
   emptyState.hidden = true;
   try {
-    await ensureFolderIndex();
-    const fields = "files(id,name,mimeType,thumbnailLink,webViewLink,webContentLink,parents,modifiedTime,size,properties),nextPageToken";
-    const q = `trashed=false and mimeType != '${FOLDER_MIME}' and name != '${STATS_FILENAME}'`;
-    let all = [];
-    let pageToken = "";
-    // Pull a bit more than we need, since some results will be outside our
-    // root folder and get filtered out below.
-    do {
-      const url = `${DRIVE_FILES_URL}?q=${encodeURIComponent(q)}&fields=${encodeURIComponent(fields)}&pageSize=50&orderBy=modifiedTime desc${pageToken ? `&pageToken=${pageToken}` : ""}`;
-      const res = await driveFetch(url);
-      const data = await res.json();
-      all = all.concat(data.files || []);
-      pageToken = data.nextPageToken || "";
-    } while (pageToken && all.length < 150);
-
-    state.homeResults = all.filter((f) => (f.parents || []).some((p) => isDescendantOfRoot(p))).slice(0, 24);
+    const all = await fetchLibraryFiles();
+    state.homeResults = all
+      .slice()
+      .sort((a, b) => new Date(b.modifiedTime) - new Date(a.modifiedTime))
+      .slice(0, 60);
     renderGrid();
   } catch (err) {
     console.error(err);
@@ -874,27 +876,12 @@ async function loadRegistry() {
   grid.innerHTML = "";
   emptyState.hidden = true;
   try {
-    await ensureFolderIndex();
-    const fields = "files(id,name,mimeType,thumbnailLink,webViewLink,webContentLink,parents,modifiedTime,size,properties),nextPageToken";
     // Drive's `properties has {...}` operator requires an exact value —
     // there's no "this property key exists, any value" query. So we fetch
-    // every non-folder file in the library and filter for docCode
-    // ourselves, same approach as the dashboard stats.
-    const q = `trashed=false and mimeType != '${FOLDER_MIME}' and name != '${STATS_FILENAME}'`;
-    let all = [];
-    let pageToken = "";
-    const HARD_CAP = 2000;
-    do {
-      const url = `${DRIVE_FILES_URL}?q=${encodeURIComponent(q)}&fields=${encodeURIComponent(fields)}&pageSize=1000${pageToken ? `&pageToken=${pageToken}` : ""}`;
-      const res = await driveFetch(url);
-      const data = await res.json();
-      all = all.concat(data.files || []);
-      pageToken = data.nextPageToken || "";
-    } while (pageToken && all.length < HARD_CAP);
-
-    const inLibrary = all.filter(
-      (f) => f.properties && f.properties.docCode && (f.parents || []).some((p) => isDescendantOfRoot(p))
-    );
+    // every non-folder file actually inside the library tree (scoped, not
+    // Drive-wide) and filter for docCode ourselves.
+    const all = await fetchScopedLibraryFiles("webViewLink,webContentLink");
+    const inLibrary = all.filter((f) => f.properties && f.properties.docCode);
     inLibrary.sort((a, b) => {
       const ca = (a.properties && a.properties.docCode) || "";
       const cb = (b.properties && b.properties.docCode) || "";
@@ -1073,6 +1060,50 @@ function invalidateHomeOverviewCache() {
   homeOverviewPromise = null;
 }
 
+/**
+ * Fetches every non-folder file that lives anywhere inside the library
+ * tree (root + every department folder + their subfolders, however deep),
+ * scoping the actual Drive query to those exact folder IDs.
+ *
+ * This deliberately does NOT do "search everything, then filter to what's
+ * a descendant of root" — that was the original approach, and it quietly
+ * breaks the moment a person's Drive has enough files *outside* the
+ * library that pagination runs out before ever reaching the folders we
+ * actually care about. A Drive with hundreds of unrelated personal/work
+ * files (which is completely normal) would make department counts and
+ * "latest files" silently miss real files sitting right there in a
+ * department folder. Scoping the query itself avoids that entirely.
+ *
+ * Drive's query language has no "descendant of X" operator, only direct
+ * `'folderId' in parents` matches — so we OR together every known folder
+ * ID from folderIndex, chunked to stay well under Drive's query-length
+ * limit.
+ */
+async function fetchScopedLibraryFiles(extraFields) {
+  const folderIndex = await ensureFolderIndex();
+  const folderIds = Array.from(folderIndex.keys());
+  const fields = `files(id,name,mimeType,parents,modifiedTime,size,properties${extraFields ? "," + extraFields : ""}),nextPageToken`;
+  const CHUNK = 40; // keep each query string comfortably under Drive's limit
+
+  let all = [];
+  for (let i = 0; i < folderIds.length; i += CHUNK) {
+    const parentClause = folderIds
+      .slice(i, i + CHUNK)
+      .map((id) => `'${id}' in parents`)
+      .join(" or ");
+    const q = `(${parentClause}) and trashed=false and mimeType != '${FOLDER_MIME}' and name != '${STATS_FILENAME}'`;
+    let pageToken = "";
+    do {
+      const url = `${DRIVE_FILES_URL}?q=${encodeURIComponent(q)}&fields=${encodeURIComponent(fields)}&pageSize=1000${pageToken ? `&pageToken=${pageToken}` : ""}`;
+      const res = await driveFetch(url);
+      const data = await res.json();
+      all = all.concat(data.files || []);
+      pageToken = data.nextPageToken || "";
+    } while (pageToken);
+  }
+  return all;
+}
+
 async function fetchLibraryFiles() {
   if (homeOverviewCache && Date.now() - homeOverviewCache.fetchedAt < HOME_OVERVIEW_CACHE_MS) {
     return homeOverviewCache.data;
@@ -1080,24 +1111,10 @@ async function fetchLibraryFiles() {
   if (homeOverviewPromise) return homeOverviewPromise;
 
   homeOverviewPromise = (async () => {
-    await ensureFolderIndex();
-    const fields = "files(id,name,mimeType,thumbnailLink,parents,modifiedTime,size,properties),nextPageToken";
-    const q = `trashed=false and mimeType != '${FOLDER_MIME}' and name != '${STATS_FILENAME}'`;
-    let all = [];
-    let pageToken = "";
-    const HARD_CAP = 2000;
-    do {
-      const url = `${DRIVE_FILES_URL}?q=${encodeURIComponent(q)}&fields=${encodeURIComponent(fields)}&pageSize=1000${pageToken ? `&pageToken=${pageToken}` : ""}`;
-      const res = await driveFetch(url);
-      const data = await res.json();
-      all = all.concat(data.files || []);
-      pageToken = data.nextPageToken || "";
-    } while (pageToken && all.length < HARD_CAP);
-
-    const inLibrary = all.filter((f) => (f.parents || []).some((p) => isDescendantOfRoot(p)));
-    homeOverviewCache = { data: inLibrary, fetchedAt: Date.now(), capped: all.length >= HARD_CAP };
+    const all = await fetchScopedLibraryFiles("thumbnailLink,webViewLink,webContentLink");
+    homeOverviewCache = { data: all, fetchedAt: Date.now(), capped: false };
     homeOverviewPromise = null;
-    return inLibrary;
+    return all;
   })();
 
   return homeOverviewPromise;
@@ -1228,6 +1245,19 @@ async function loadDashboard() {
 }
 
 function getSortedDepartmentFolders() {
+  const index = state.folderIndex;
+  if (index) {
+    const found = [];
+    index.forEach((entry, id) => {
+      if (entry.parentId === state.rootFolderId) {
+        const idx = departmentIndex(entry.name);
+        if (idx !== -1) found[idx] = { id, name: entry.name, mimeType: FOLDER_MIME };
+      }
+    });
+    if (found.filter(Boolean).length) return found.filter(Boolean);
+  }
+  // Fallback (folder index not built yet): only correct if the currently
+  // loaded folder happens to be the library root.
   return state.files
     .filter((f) => f.mimeType === FOLDER_MIME)
     .slice()
@@ -2275,7 +2305,7 @@ function registerServiceWorker() {
   // Service workers require HTTPS (localhost is exempt). Fails silently
   // and harmlessly if served over plain http on a real domain.
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("sw.js?v=18").catch((err) => {
+    navigator.serviceWorker.register("sw.js?v=19").catch((err) => {
       console.warn("Service worker registration skipped:", err.message);
     });
   });

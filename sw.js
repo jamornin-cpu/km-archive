@@ -1,13 +1,14 @@
-const CACHE_NAME = "archive-shell-v19";
+const CACHE_NAME = "archive-shell-v21";
 const SHELL_FILES = [
   "./",
   "./index.html",
-  "./styles.css?v=16",
-  "./app.js?v=16",
-  "./config.js?v=16",
+  "./styles.css?v=18",
+  "./app.js?v=18",
+  "./config.js?v=18",
   "./manifest.json",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
+  "./icons/poommy-avatar.png",
 ];
 
 self.addEventListener("install", (event) => {

@@ -1147,6 +1147,7 @@ function dashboardSectionHtml() {
           <h2>แดชบอร์ดสรุปเอกสาร</h2>
           <div class="home-sub">ภาพรวมจำนวนเอกสารแยกตามส่วนงาน</div>
         </div>
+        <button class="home-view-all" id="dashboard-refresh-btn">🔄 รีเฟรช</button>
       </div>
       <div class="dashboard-overview" id="dashboard-overview">
         <div class="search-loading">กำลังนับจำนวนเอกสาร…</div>
@@ -1421,6 +1422,20 @@ function renderHomeSections() {
     expertsEl.innerHTML = `<div class="empty-sub">ยังไม่มีข้อมูลผู้เชี่ยวชาญ — เพิ่มได้ที่ EXPERTS ใน config.js</div>`;
   } else {
     experts.forEach((p) => expertsEl.appendChild(expertCardEl(p)));
+  }
+
+  // --- dashboard manual refresh (forces past the 2-min cache) ---
+  const dashRefreshBtn = $("dashboard-refresh-btn");
+  if (dashRefreshBtn) {
+    dashRefreshBtn.addEventListener("click", async () => {
+      dashRefreshBtn.disabled = true;
+      dashRefreshBtn.textContent = "⏳ กำลังโหลด…";
+      invalidateHomeOverviewCache();
+      state.folderIndex = null;
+      await Promise.all([loadDashboard(), loadLatestPreview()]);
+      dashRefreshBtn.disabled = false;
+      dashRefreshBtn.textContent = "🔄 รีเฟรช";
+    });
   }
 
   // --- latest-files preview (async; guard against a stale response landing
@@ -1941,10 +1956,13 @@ async function startUploads(files, typeKey, deptInfo, rev, targetFolderId) {
         fill.style.width = "100%";
         status.textContent = overrideName ? `Filed as ${overrideName}` : "Filed.";
         invalidateHomeOverviewCache();
-        // only refresh the visible grid if we're actually looking at the
-        // folder the file just landed in (e.g. uploading a department's
-        // file while sitting on the Home page shouldn't yank you there)
-        if (state.currentFolderId === uploadFolderId) {
+        state.folderIndex = null; // a new file (or its folder) may not be in the cached tree yet
+        // Refresh whatever the user is currently looking at:
+        if (isAtRoot() && !state.searchMode && state.homeView === "sections") {
+          // on the Home page — re-render the dashboard + latest sections
+          renderHomeSections();
+        } else if (state.currentFolderId === uploadFolderId) {
+          // inside the folder the file just landed in — refresh the grid
           loadFolder(state.currentFolderId);
         }
         setTimeout(() => {
@@ -2257,7 +2275,7 @@ function registerServiceWorker() {
   // Service workers require HTTPS (localhost is exempt). Fails silently
   // and harmlessly if served over plain http on a real domain.
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("sw.js?v=16").catch((err) => {
+    navigator.serviceWorker.register("sw.js?v=18").catch((err) => {
       console.warn("Service worker registration skipped:", err.message);
     });
   });
